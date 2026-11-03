@@ -5,6 +5,7 @@
    refuses to run, so the sample page never calls the server, Buffer or the link checker. */
 import { lengthFor, limitFor, SERVICE_NAMES } from './checks/length.js';
 import { runAll } from './checks/index.js';
+import { runLookback } from './checks/lookback.js';
 
 const $ = (id) => document.getElementById(id);
 const meta = (n) => { if (typeof document === 'undefined') return ''; const m = document.querySelector('meta[name="' + n + '"]'); return m ? m.getAttribute('content') : ''; };
@@ -17,7 +18,8 @@ const SEV_WORD = { high: 'Fix before it posts', medium: 'Worth a look', low: 'No
 const LINK_TTL = 10 * 60 * 1000;
 
 const SCAN_GAP_MS = 60000;
-const state = { raw: null, data: null, filter: 'flagged', notes: false, links: new Map(), linkQueue: [], linkRunning: false, busy: false, dialog: null, nextScanAt: 0 };
+const state = { raw: null, data: null, filter: 'flagged', notes: false, links: new Map(), linkQueue: [], linkRunning: false, busy: false, dialog: null, nextScanAt: 0,
+  scanError: null, ended: false, view: 'queue', back: null, backBusy: false, backError: null };
 
 /* run the checks on the current raw scan (after a scan, and after each fix) */
 function recompute() {
@@ -59,7 +61,8 @@ async function api(path, body) {
 const liveBackend = {
   scan: () => api('/api/scan', {}),
   checkLinks: (body) => api('/api/links', body),
-  fix: (body) => api('/api/fix', body)
+  fix: (body) => api('/api/fix', body),
+  lookback: () => api('/api/lookback', {})
 };
 let backend = liveBackend;
 const T = (liveText, tryText) => (MODE === 'try' ? tryText : liveText);
@@ -142,12 +145,67 @@ function highlighted(text, flags, where) {
   return frag;
 }
 
+/* ---------- problems: limits and Buffer's 429 read as a short pause, with the time to come back ---------- */
+const CALM = {
+  app_busy: 'Buffer gives Last Look a shared allowance of requests, and it is nearly used up for the next few minutes.',
+  app_busy_day: 'Last Look has used most of today’s shared Buffer allowance.',
+  buffer_rate: 'Buffer asked Last Look to slow down for a moment.',
+  gate_down: 'Last Look is catching its breath.',
+  slow_down: 'Lots of requests came from your network just now.',
+  scan_gap: 'Scans are spaced a minute apart.',
+  scan_budget: 'That is today’s scan limit for your account.',
+  lookback_gap: 'Look back runs at most once every two minutes.',
+  lookback_budget: 'That is today’s Look back limit for your account.',
+  fix_rate: 'That was a lot of changes in one minute.',
+  fix_budget: 'That is today’s limit of fixes for your account.',
+  link_rate: 'Link checks are paced for a moment.'
+};
+export function retryText(sec, now) {
+  const s = Math.max(1, Math.ceil(Number(sec) || 60));
+  if (s <= 90) return 'Try again in about a minute';
+  const at = new Date((now || Date.now()) + s * 1000);
+  const hm = String(at.getHours()).padStart(2, '0') + ':' + String(at.getMinutes()).padStart(2, '0');
+  if (s < 3600) return 'Try again at ' + hm + ', in about ' + Math.round(s / 60) + ' minutes';
+  return 'Try again after ' + hm;
+}
+export function isCalm(e) { return !!e && (e.status === 429 || e.status === 503 || Object.prototype.hasOwnProperty.call(CALM, e.code)); }
+export function calmText(e) {
+  return (CALM[e.code] || e.message || 'Last Look needs a short pause.') + ' ' + retryText(e.retryAfter) + '. Nothing was changed.';
+}
+function problemBanner(e) {
+  if (isCalm(e)) return el('div', { class: 'banner calm', role: 'status' }, el('strong', null, 'A short pause. '), calmText(e));
+  return el('div', { class: 'banner err', role: 'alert' }, e.message);
+}
+const skeleton = () => el('div', { class: 'skeleton', 'aria-hidden': 'true' }, el('div'), el('div'), el('div'));
+
 /* ---------- rendering ---------- */
 function render() {
+  if (state.ended) return;
+  $('rescan').hidden = state.view !== 'queue';
+  $('links-status').hidden = state.view !== 'queue';
+  if (state.view === 'back') return renderBack();
   const d = state.data;
   const q = $('queue');
   q.replaceChildren();
-  if (!d) return;
+  if (!d) {
+    if (!state.scanError) {
+      $('headline').textContent = T('Reading your queue…', 'Loading the sample…');
+      $('subline').textContent = T('This takes a few seconds.', 'One moment.');
+      q.append(skeleton());
+      return;
+    }
+    const calm = isCalm(state.scanError);
+    $('headline').textContent = calm ? 'A short pause' : 'Could not read your queue';
+    $('subline').textContent = calm ? 'Last Look will be ready to scan again shortly.' : '';
+    q.append(problemBanner(state.scanError));
+    q.append(el('div', { class: 'empty' }, el('h2', { text: 'Meanwhile' }),
+      el('p', { text: 'Look back at what already went out, or see what Last Look catches on a sample queue.' }),
+      el('div', { class: 'cta-row center' },
+        MODE === 'live' ? el('button', { type: 'button', class: 'btn', onclick: () => setView('back') }, 'Look back at sent posts') : null,
+        el('a', { class: 'btn', href: '/try' }, 'See a sample queue'))));
+    return;
+  }
+  if (state.scanError) q.append(problemBanner(state.scanError));
   const posts = d.posts;
   const live = posts.filter((p) => p.status !== 'draft');
   const flaggedPosts = posts.filter((p) => flagsFor(p).some((f) => f.severity !== 'low'));
@@ -171,11 +229,13 @@ function render() {
   if (d.meta && d.meta.repeatsPartial) q.append(el('div', { class: 'banner warn' }, 'Your queue is large, so repeated posts were only partly checked.'));
   if (d.rateLow) q.append(el('div', { class: 'banner warn' }, 'Buffer’s request allowance for Last Look is nearly used up for now, so scans may pause for a while.'));
   if (!d.channels.length || !posts.length) {
-    q.append(el('div', { class: 'empty' }, el('h2', { text: !d.channels.length ? 'No channels connected in Buffer' : 'Your queue is empty' }),
-      el('p', { text: !d.channels.length ? 'Last Look checks posts queued in Buffer. Add a channel there first.' : 'Queue some posts in Buffer, then scan again for a last look before they go out.' }),
+    const noCh = !d.channels.length;
+    q.append(el('div', { class: 'empty' }, el('h2', { text: noCh ? 'No channels connected in Buffer' : 'Your queue is empty' }),
+      el('p', { text: noCh ? 'Last Look checks posts queued in Buffer. Add a channel there first, or see what it catches on a sample queue.' : 'Nothing is waiting to go out, so there is nothing to check yet. Look back at what already went out to see what Last Look would have caught, or try it on a sample queue.' }),
       el('div', { class: 'cta-row center' },
-        el('a', { class: 'btn btn-primary', href: 'https://publish.buffer.com', rel: 'noopener noreferrer', target: '_blank' }, 'Open Buffer'),
-        el('a', { class: 'btn', href: '/try' }, 'See a sample queue'))));
+        noCh ? null : el('button', { type: 'button', class: 'btn btn-primary', onclick: () => setView('back') }, 'Look back at sent posts'),
+        el('a', { class: 'btn', href: '/try' }, 'See a sample queue'),
+        el('a', { class: noCh ? 'btn btn-primary' : 'btn btn-quiet', href: 'https://publish.buffer.com', rel: 'noopener noreferrer', target: '_blank' }, 'Open Buffer'))));
     return;
   }
   const byChannel = new Map(d.channels.map((c) => [c.id, []]));
@@ -258,6 +318,126 @@ function renderPost(p, ch) {
   }
   if (actions.length) art.append(el('div', { class: 'fix-row' }, actions));
   return art;
+}
+
+/* ---------- Look back (read-only, sent posts) ---------- */
+const cardId = (p) => 'lb-' + String(p.id).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
+const snippet = (t, n) => { const x = String(t || '').replace(/\s+/g, ' ').trim(); return x.length > n ? x.slice(0, n - 1) + '…' : x; };
+const sentIso = (p) => p.sentAt || p.dueAt;
+function backChannel(p) {
+  const chs = (state.back && state.back.raw.channels) || [];
+  return chs.find((c) => c.id === p.channelId) || { id: p.channelId, name: 'Unknown channel', service: p.channelService, timezone: 'Europe/London' };
+}
+function jumpTo(e, p) {
+  e.preventDefault();
+  const c = document.getElementById(cardId(p));
+  if (!c) return;
+  const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  c.scrollIntoView({ block: 'start', behavior: still ? 'auto' : 'smooth' });
+  c.focus({ preventScroll: true });
+  c.classList.add('flash');
+  setTimeout(() => c.classList.remove('flash'), 1600);
+}
+async function loadBack() {
+  if (state.backBusy) return;
+  state.backBusy = true; state.backError = null;
+  render();
+  try {
+    const d = await backend.lookback();
+    state.back = { raw: d, res: runLookback(d.channels, d.posts, new Date()) };
+  } catch (e) {
+    if (e.status === 401) { state.backBusy = false; return sessionEnded(); }
+    state.backError = e;
+  }
+  state.backBusy = false;
+  render();
+}
+function renderBack() {
+  const q = $('queue');
+  q.replaceChildren();
+  if (!state.back) {
+    if (state.backError) {
+      $('headline').textContent = isCalm(state.backError) ? 'A short pause' : 'Could not look back right now';
+      $('subline').textContent = 'Your queue is still on the Queue tab.';
+      q.append(problemBanner(state.backError));
+      q.append(el('p', null, el('button', { type: 'button', class: 'btn', onclick: () => loadBack() }, 'Try again')));
+      return;
+    }
+    $('headline').textContent = 'Looking back…';
+    $('subline').textContent = T('Reading your most recent sent posts from Buffer…', 'Reading the sample studio’s sent posts…');
+    q.append(skeleton());
+    return;
+  }
+  const { raw, res } = state.back;
+  const t = res.totals;
+  if (!t.checked) {
+    $('headline').textContent = 'No sent posts yet';
+    $('subline').textContent = 'Once Buffer has sent posts for you, Look back checks them here.';
+    q.append(el('div', { class: 'empty' }, el('h2', { text: 'Nothing to look back on' }), el('p', { text: 'Meanwhile, see what Last Look catches on a sample queue.' }), el('a', { class: 'btn', href: '/try' }, 'See a sample queue')));
+    return;
+  }
+  $('headline').textContent = t.issues ? 'Last Look would have caught ' + plural(t.issues, 'issue') + ' in your last ' + plural(t.checked, 'sent post') : 'Nothing to catch in your last ' + plural(t.checked, 'sent post');
+  $('subline').textContent = (t.issues ? plural(t.postsWithIssues, 'post') + ' affected. ' : 'No formatting, length, placeholder, repeat, day-word or alt-text problems. ') + 'Read-only: sent posts cannot be changed, and nothing was.';
+  if (raw.orgsSkipped) q.append(el('div', { class: 'banner warn' }, 'Look back read your first two organizations; ' + plural(raw.orgsSkipped, 'more organization was', 'more organizations were') + ' left out to save requests.'));
+  if (res.meta && res.meta.repeatsPartial) q.append(el('div', { class: 'banner warn' }, 'Repeats were only partly checked across this many posts.'));
+  q.append(el('p', { class: 'lb-note muted' }, 'Each post is judged at the moment it actually went out, in its channel’s time zone.' + (t.links ? ' ' + plural(t.links, 'link') + ' in these posts ' + (t.links === 1 ? 'was' : 'were') + ' not opened: Look back reads text only.' : '')));
+  const byId = new Map(res.posts.map((p) => [p.id, p]));
+  const groups = res.groups.filter((g) => g.items.length || (state.notes && g.notes.length));
+  if (groups.length) {
+    const wrap = el('div', { class: 'lb-groups' });
+    for (const g of groups) {
+      const items = g.items.concat(state.notes ? g.notes : []);
+      const ul = el('ul', { class: 'lb-list' });
+      for (const it of items) {
+        const p = byId.get(it.postId);
+        if (!p) continue;
+        const ch = backChannel(p);
+        ul.append(el('li', { class: 'lb-item ' + SEV_CLASS[it.flag.severity] },
+          el('a', { href: '#' + cardId(p), onclick: (e) => jumpTo(e, p) }, el('span', { class: 'lb-when' }, fmtWhen(sentIso(p), ch.timezone)), ' · ' + svcName(ch.service) + ' · “' + snippet(p.text, 64) + '”'),
+          el('span', { class: 'lb-why' }, it.flag.title)));
+      }
+      wrap.append(el('section', { class: 'lb-group', 'aria-label': g.title },
+        el('h2', null, g.title, ' ', el('span', { class: 'lb-count' }, String(g.items.length + (state.notes ? g.notes.length : 0)))),
+        el('p', { class: 'muted' }, g.explain), ul));
+    }
+    q.append(wrap);
+  }
+  const visible = res.posts.filter((p) => state.filter === 'all' || p.flags.some((f) => state.notes || f.severity !== 'low'));
+  if (visible.length) {
+    q.append(el('h2', { class: 'lb-heading' }, state.filter === 'all' ? 'All ' + plural(t.checked, 'sent post') + ', newest first' : 'The posts, newest first'));
+    for (const p of visible) q.append(renderSent(p, backChannel(p)));
+  } else {
+    q.append(el('p', { class: 'clear-line' }, '✓ ' + (t.checked === 1 ? 'Your last sent post was clean.' : 'All ' + t.checked + ' were clean.') + ' Switch to “All posts” to read them.'));
+  }
+}
+function renderSent(p, ch) {
+  const flags = p.flags.filter((f) => state.notes || f.severity !== 'low');
+  const art = el('article', { class: 'post sent' + (flags.length ? '' : ' is-clear'), id: cardId(p), tabindex: '-1', 'aria-label': 'Post sent ' + fmtWhen(sentIso(p), ch.timezone) });
+  const link = typeof p.externalLink === 'string' && /^https:\/\//.test(p.externalLink) ? p.externalLink : null;
+  art.append(el('div', { class: 'post-meta' },
+    el('span', { class: 'when' }, 'Sent ' + fmtWhen(sentIso(p), ch.timezone)), el('span', null, fromNow(sentIso(p))),
+    el('span', { class: 'badge' }, ch.displayName || ch.name), el('span', { class: 'svc' }, svcName(ch.service)),
+    link ? el('a', { class: 'lb-open', href: link, rel: 'noopener noreferrer', target: '_blank' }, 'Open post') : null));
+  if (p.thread && p.thread.length > 1) {
+    p.thread.forEach((t, i) => art.append(el('div', { class: 'thread-part' }, el('p', { class: 'thread-label' }, 'Part ' + (i + 1) + ' of ' + p.thread.length), el('p', { class: 'post-text' }, highlighted(t.text, p.flags, 'thread:' + i)))));
+  } else {
+    art.append(el('p', { class: 'post-text' }, highlighted(p.text || '', p.flags, 'text')));
+  }
+  if (p.assets && p.assets.length) art.append(el('p', { class: 'channel-sub' }, plural(p.assets.length, 'attachment')));
+  if (flags.length) {
+    art.append(el('ul', { class: 'flags' }, flags.map((f) => el('li', { class: 'flag ' + SEV_CLASS[f.severity] }, el('span', { class: 'dot', 'aria-hidden': 'true' }),
+      el('div', { class: 'flag-body' }, el('span', { class: 'sev' }, f.severity === 'low' ? 'Note' : 'Would have caught'), el('strong', null, f.title), el('p', null, f.detail))))));
+  }
+  return art;
+}
+function setView(v) {
+  state.view = v === 'back' ? 'back' : 'queue';
+  $('v-queue').setAttribute('aria-pressed', String(state.view === 'queue'));
+  $('v-back').setAttribute('aria-pressed', String(state.view === 'back'));
+  try { history.replaceState(null, '', state.view === 'back' ? '#lookback' : location.pathname); } catch (e) { /* not important */ }
+  if (state.view === 'back' && !state.back && !state.backBusy) { loadBack(); return; }
+  render();
+  if (state.view === 'queue' && state.data) $('links-status').textContent = state.linkRunning ? $('links-status').textContent : linkSummary();
 }
 
 /* ---------- word diff (LCS on word tokens) ---------- */
@@ -387,7 +567,7 @@ function applyFixResult(res) {
 
 /* ---------- scanning and link checks ---------- */
 function sessionEnded() {
-  state.data = null; state.raw = null;
+  state.data = null; state.raw = null; state.ended = true;
   $('headline').textContent = 'Your session ended';
   $('subline').textContent = 'Sessions last an hour at most. Connect again to keep going.';
   $('rescan').disabled = true;
@@ -398,25 +578,25 @@ async function doScan(quiet) {
   state.busy = true;
   $('rescan').disabled = true;
   $('rescan').textContent = 'Scanning…';
-  if (!quiet && !state.data) $('subline').textContent = T('Reading your queue from Buffer…', 'Loading the sample queue…');
+  if (!quiet && !state.data && state.view === 'queue') $('subline').textContent = T('Reading your queue from Buffer…', 'Loading the sample queue…');
   try {
     const d = await backend.scan();
     for (const p of d.posts) p.pts = d.ts;
     state.raw = d;
+    state.scanError = null;
     state.nextScanAt = MODE === 'try' ? 0 : Date.now() + SCAN_GAP_MS;
     recompute();
     const now = Date.now();
     for (const [u, r] of state.links) if (now - r.at > LINK_TTL) state.links.delete(u);
     state.linkQueue = d.links.filter((l) => !state.links.has(l.url)).map((l) => ({ url: l.url, sig: l.sig, ts: d.ts }));
     if (!state.linkQueue.length) $('links-status').textContent = linkSummary();
-    render();
+    if (state.view === 'queue') render();
     runLinks();
   } catch (e) {
     if (e.status === 401) return sessionEnded();
     if (e.retryAfter) state.nextScanAt = Date.now() + Math.min(e.retryAfter, 3600) * 1000;
-    const q = $('queue');
-    if (!state.data) { $('headline').textContent = 'Could not read your queue'; $('subline').textContent = ''; q.replaceChildren(); }
-    q.prepend(el('div', { class: 'banner err', role: 'alert' }, e.message));
+    state.scanError = e;
+    if (state.view === 'queue') render();
   } finally {
     state.busy = false;
     scanButton();
@@ -462,12 +642,12 @@ async function runLinks() {
         state.links.set(r.url, { at: Date.now(), flag: r.flag || null, kind: r.kind, status: r.status });
       }
       done += batch.length;
-      render();
+      if (state.view === 'queue') render();
     }
     status.textContent = linkSummary();
   } finally {
     state.linkRunning = false;
-    render();
+    if (state.view === 'queue') render();
   }
 }
 
@@ -506,11 +686,13 @@ async function init() {
   if (MODE === 'try') {
     const { SampleBackend } = await import('./sample.js');
     const sample = new SampleBackend();
-    backend = { scan: () => sample.scan(), checkLinks: (b) => sample.checkLinks(b), fix: (b) => sample.fix(b) };
+    backend = { scan: () => sample.scan(), checkLinks: (b) => sample.checkLinks(b), fix: (b) => sample.fix(b), lookback: () => sample.lookback() };
     $('rescan').addEventListener('click', () => { sample.reset(); state.links.clear(); state.linkQueue = []; state.raw = null; state.data = null; doScan(false).then(() => toast('Sample reset.')); });
   } else {
     $('rescan').addEventListener('click', () => doScan(false));
   }
+  $('v-queue').addEventListener('click', () => setView('queue'));
+  $('v-back').addEventListener('click', () => setView('back'));
   $('f-flagged').addEventListener('click', () => setFilter('flagged'));
   $('f-all').addEventListener('click', () => setFilter('all'));
   $('f-notes').addEventListener('change', (e) => { state.notes = e.target.checked; render(); });
@@ -530,6 +712,7 @@ async function init() {
     setInterval(sessionClock, 30000);
   }
   setInterval(scanButton, 1000);
+  if (location.hash === '#lookback') setView('back');
   doScan(false);
 }
 if (typeof document !== 'undefined' && document.getElementById('queue')) init();

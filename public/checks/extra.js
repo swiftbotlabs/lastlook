@@ -37,8 +37,9 @@ export function checkPlaceholders(post) {
   return flags;
 }
 
-/* images without a description */
-export function checkAltText(post) {
+/* images without a description (opts.sent: the post already went out, for Look back) */
+export function checkAltText(post, opts) {
+  const S = !!(opts && opts.sent);
   const imgs = [];
   (post.assets || []).forEach((a, i) => { if (a && a.type === 'image') imgs.push({ a, where: 'asset:' + i }); });
   if (post.thread && post.thread.length > 1) post.thread.forEach((t, ti) => (t.assets || []).forEach((a, i) => { if (a && a.type === 'image') imgs.push({ a, where: 'thread:' + ti + ':asset:' + i }); }));
@@ -46,8 +47,8 @@ export function checkAltText(post) {
   if (!missing.length) return [];
   return [{
     check: 'alt', id: 'alt.missing', severity: 'medium', where: 'assets',
-    title: missing.length === 1 ? 'Image has no alt text' : missing.length + ' images have no alt text',
-    detail: 'People using screen readers hear nothing for ' + (missing.length === 1 ? 'this image' : 'these images') + '. Add a short description in Buffer before it goes out.',
+    title: S ? (missing.length === 1 ? 'Image went out without alt text' : missing.length + ' images went out without alt text') : missing.length === 1 ? 'Image has no alt text' : missing.length + ' images have no alt text',
+    detail: S ? 'People using screen readers heard nothing for ' + (missing.length === 1 ? 'this image' : 'these images') + '. Buffer lets you add alt text before a post goes out.' : 'People using screen readers hear nothing for ' + (missing.length === 1 ? 'this image' : 'these images') + '. Add a short description in Buffer before it goes out.',
     data: { count: missing.length },
     fixes: []
   }];

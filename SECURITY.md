@@ -17,7 +17,8 @@ What the app protects: each user's Buffer access token and their queued posts, a
 ## Shared Buffer allowance (availability)
 - The gate records Buffer's `RateLimit` headers from every response (15-minute and 24-hour windows) and reserves the calls an operation may spend before it runs. Scans and fixes are refused below 20 / 150 remaining; sign-ins below 5 / 30.
 - Per account (by account hash, not session): one scan per 60 s, 20 scans, 40 fixes, 300 link checks, 20 sign-ins per UTC day, 10 fixes and 30 link batches per minute.
-- A scan spends at most 3 Buffer requests. After a fix, the page updates that one post from the mutation result instead of rescanning.
+- A scan spends at most 3 Buffer requests; a Look back at most 2 (one per organization, first two), at most once per 2 minutes and 6 times a day per account, with the same app-wide margins as scans.
+- Look back is a query only (`status: [sent]`). Its posts carry no post token, so none of them can be passed to `/api/fix`; the `externalLink` it shows is kept only when it parses as an `https:` URL without credentials (checked again in the browser). Links in sent posts are never fetched. After a fix, the page updates that one post from the mutation result instead of rescanning.
 - `/api/fix` spends a Buffer request only on a post id the session's own scan returned: each scanned post carries an HMAC token bound to the session and scan time (1 hour); anything else is refused with no Buffer call.
 - Per IP: 120 page and API requests per minute (Workers rate-limiting binding), checked before any session lookup; sign-in 10 per minute.
 

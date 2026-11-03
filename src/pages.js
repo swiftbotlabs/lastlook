@@ -2,7 +2,7 @@
    the app page is a shell, and public/app.js builds the queue view with textContent. */
 
 export const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const V = '20261103f';
+const V = '20261103g';
 
 const LOGO = '<svg class="logo" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect x="1" y="1" width="30" height="30" rx="8" class="logo-bg"/><path d="M6 17.5c2.6-4.4 6-6.6 10-6.6s7.4 2.2 10 6.6c-2.6 4.4-6 6.6-10 6.6s-7.4-2.2-10-6.6z" class="logo-eye"/><circle cx="16" cy="17.5" r="3.4" class="logo-pupil"/><path d="M9 8.2h14" class="logo-line"/></svg>';
 
@@ -103,6 +103,10 @@ function appBody(o) {
   <div class="banner try" role="note"><strong>Sample queue, made up for this demo.</strong> These are the queued posts of Little Kiln Studio, a fictional pottery studio, checked by the same code Last Look runs on a real Buffer queue. Nothing here is sent to Buffer; fixes change only this page. <a href="/oauth/start">Connect Buffer</a> to check your own.</div>` : '';
   return `
 <main id="main" class="app">${banner}
+  <div class="views" role="group" aria-label="View">
+    <button type="button" class="view-tab" id="v-queue" aria-pressed="true">${o.sample ? 'Sample queue' : 'Your queue'}</button>
+    <button type="button" class="view-tab" id="v-back" aria-pressed="false">Look back</button>
+  </div>
   <section class="summary" aria-live="polite">
     <div class="summary-main">
       <h1 id="headline">${o.sample ? 'Loading the sample…' : 'Reading your queue…'}</h1>
@@ -162,17 +166,18 @@ export function privacyPage() {
   <h2>What Last Look asks Buffer for</h2>
   <ul>
     <li><strong>account:read</strong>: your account id and display name, and your organizations and channels (name, network, time zone, avatar), so posts can be judged per channel.</li>
-    <li><strong>posts:read</strong>: your scheduled posts, posts awaiting approval and drafts: text, scheduled time, attached media type and alt text, link previews and first comments.</li>
+    <li><strong>posts:read</strong>: your scheduled posts, posts awaiting approval and drafts: text, scheduled time, attached media type and alt text, link previews and first comments. When you open <strong>Look back</strong>, also your most recent sent posts (up to 90): the same fields plus when each went out and the link to it on the network.</li>
     <li><strong>posts:write</strong>: used only when you press a fix button and then confirm. It edits that one post’s text, moves it to drafts, or moves it to the front or end of its queue. Last Look never creates, publishes or deletes posts.</li>
   </ul>
 
   <h2>Where the checks run</h2>
-  <p>Our server fetches your queue from Buffer and passes it straight to your browser. The checks themselves run in your browser tab. The server does not keep the posts after answering.</p>
+  <p>Our server fetches your queue (and, for Look back, your recent sent posts) from Buffer and passes it straight to your browser. The checks themselves run in your browser tab. The server does not keep the posts after answering. Look back only reads: sent posts cannot be changed, and links in them are not opened.</p>
+  <p>The sample at <a href="/try">/try</a> is made-up data that lives in the page. It needs no sign-in and sends nothing to our server or to Buffer.</p>
 
   <h2>What is stored, and for how long</h2>
   <ul>
     <li><strong>Your session</strong> (encrypted with AES-256-GCM, under a key that needs both our server secret and the random session id held only in your browser’s cookie): your Buffer access token and its expiry, a security token for your browser, a one-way hash of your Buffer account id, your organizations’ ids and names (up to five), your Buffer display name, whether Buffer granted editing, and when the session started. It lives at most one hour, matching Buffer’s access token.</li>
-    <li><strong>Usage counters</strong>, stored under the one-way hash of your account id: a hash of your current session id, the time of your last scan, and today’s number of scans, fixes, link checks and sign-ins. They contain no content and reset every day (UTC); they let us limit use so the app stays available to everyone.</li>
+    <li><strong>Usage counters</strong>, stored under the one-way hash of your account id: a hash of your current session id, the time of your last scan and last Look back, and today’s number of scans, Look backs, fixes, link checks and sign-ins. They contain no content and reset every day (UTC); they let us limit use so the app stays available to everyone.</li>
     <li><strong>For one minute only</strong>: a hash of each link we checked for you (so the same link is not fetched twice within a minute) and, per linked website (for example “example.com”), how many checks it received in that minute across all users.</li>
     <li><strong>App-wide</strong>: how many requests Buffer still allows this app, read from Buffer’s replies.</li>
     <li><strong>In your browser</strong>: one cookie with the session id (HttpOnly, Secure, SameSite=Lax). During sign-in a second cookie lives for at most 10 minutes with one-time sign-in values.</li>
@@ -194,7 +199,7 @@ export function privacyPage() {
   <p>Press <strong>Disconnect</strong> and your session is refused from that moment; its record, with the Buffer token, is deleted from our store right after (within seconds), and a cached copy can linger in Cloudflare’s storage for up to about a minute without being usable. Signing in again also ends any older Last Look session of the same Buffer account. To revoke Last Look’s access on Buffer’s side, remove it from the connected apps in your Buffer account settings.</p>
 
   <h2>Limits</h2>
-  <p>To keep Last Look available for everyone: one scan a minute, 20 scans and 40 fixes a day per account, and new scans pause when Buffer’s request allowance for this app runs low.</p>
+  <p>To keep Last Look available for everyone: one scan a minute, 20 scans and 40 fixes a day per account, one Look back every two minutes and 6 a day, and new requests pause when Buffer’s request allowance for this app runs low.</p>
 
   <h2>Who runs it</h2>
   <p>Swift Bot Labs, contact <a href="mailto:swiftbotlabs@gmail.com">swiftbotlabs@gmail.com</a>. Last Look runs on Cloudflare Workers. It is not made by or affiliated with Buffer.</p>
@@ -222,6 +227,8 @@ export function aboutPage() {
   </ul>
   <h2>4. Fix</h2>
   <p>Each flag offers the fixes that make sense for it: edit the text (with a suggested version where one can be made, a live character count and a word-by-word view of the change), move the post to drafts, or move a queue post to the top or bottom of its queue. Nothing is saved until you confirm. Before saving, Last Look reads the post again and stops if it changed in Buffer since your scan, or if it goes out in the next three minutes. Threads are left to Buffer’s editor so every part stays in step. After a fix, that one post is updated on the page from Buffer’s answer and checked again; nothing else is re-read. Last Look never deletes a post.</p>
+  <h2>5. Look back</h2>
+  <p>After you connect, the Look back tab reads your most recent sent posts (up to 90, one request per organization) and runs the text checks on them, each judged at the moment it actually went out in its channel’s time zone: formatting that showed as raw text, posts longer than the network allows, leftover placeholders, the same post sent twice, day and time words that were wrong when it went out, and images sent without alt text. The result reads “Last Look would have caught N issues in your last M sent posts”, grouped by check, each linking to the post. It only reads: sent posts cannot be changed, and their links are not opened.</p>
   <h2>Limits</h2>
   <ul>
     <li>Up to 300 queued posts per scan (three requests to Buffer), one scan a minute, 20 scans and 40 fixes a day per account.</li>

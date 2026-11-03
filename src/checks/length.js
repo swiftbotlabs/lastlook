@@ -132,8 +132,9 @@ export function countingNote(service) {
   }
 }
 
-/* returns a list of flags for one post */
-export function checkLength(post, channel) {
+/* returns a list of flags for one post (opts.sent: the post already went out, for Look back) */
+export function checkLength(post, channel, opts) {
+  const S = !!(opts && opts.sent);
   const service = (channel && channel.service) || post.channelService;
   const limit = limitFor(service, channel, post);
   const flags = [];
@@ -146,8 +147,8 @@ export function checkLength(post, channel) {
       const over = n - limit;
       flags.push({
         check: 'length', id: 'length.over', severity: 'high', where: it.where,
-        title: 'Too long for ' + name + ' by ' + over,
-        detail: name + ' allows ' + limit.toLocaleString('en-US') + ' and this ' + (it.where === 'text' ? 'post' : 'thread part') + ' counts ' + n.toLocaleString('en-US') + '. ' + countingNote(service) + ' Buffer will refuse to send it as it is.',
+        title: (S ? 'Longer than ' + name + ' allows, by ' : 'Too long for ' + name + ' by ') + over,
+        detail: name + ' allows ' + limit.toLocaleString('en-US') + ' and this ' + (it.where === 'text' ? 'post' : 'thread part') + ' counts ' + n.toLocaleString('en-US') + '. ' + countingNote(service) + (S ? ' ' + name + ' may have cut it short.' : ' Buffer will refuse to send it as it is.'),
         data: { count: n, limit, service },
         fixes: it.where === 'text' ? [{ type: 'edit', label: 'Shorten it' }, { type: 'draft' }] : [{ type: 'draft' }]
       });

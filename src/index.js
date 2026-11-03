@@ -5,13 +5,14 @@
      GET  /oauth/callback    finish OAuth, create the session (replaces any older session of the same account)
      POST /api/scan          read the queue through the user's token (the checks run in the browser)
      POST /api/links         check up to 6 links found by a scan (server-signed, 10-minute expiry)
+     POST /api/lookback      read-only: the account's most recent sent posts (up to 90) for the Look back checks
      POST /api/fix           edit text / move to drafts / move in queue, one post the scan returned, after confirm
      POST /api/disconnect    delete the session and its token
      GET  /try               the same app on a made-up sample queue (no session, no server or Buffer calls)
      GET  /privacy, /about, /healthz
    Every POST needs the session cookie, a same-origin Origin header and the session's CSRF token.
    Every request that spends Buffer's per-app allowance or checks links asks the gate (src/gate.js) first. */
-import { gql, BufferError, Q_ACCOUNT, scanQuery, Q_POST, M_EDIT_TEXT, M_TO_DRAFT, M_MOVE, shapePost, shapeChannel } from './buffer.js';
+import { gql, BufferError, Q_ACCOUNT, scanQuery, Q_POST, Q_LOOKBACK, M_EDIT_TEXT, M_TO_DRAFT, M_MOVE, shapePost, shapeSent, shapeChannel } from './buffer.js';
 import { postLinks } from './checks/index.js';
 import { clearUrlCache } from './checks/text.js';
 import { checkLink, linkFlag, siteOf } from './net.js';
@@ -37,6 +38,8 @@ const LINK_BATCH = 6;
 const LINK_SUBREQUESTS = 40;
 const LINK_TOKEN_MS = 10 * 60 * 1000;
 const POST_TOKEN_MS = 60 * 60 * 1000;
+const LOOKBACK_N = 90;             /* sent posts per Look back */
+const MAX_LOOKBACK_CALLS = 2;      /* Buffer requests per Look back: one per organization, first two organizations */
 const IP_LIMIT = 120;              /* pages and API calls per IP per minute, checked before any session lookup */
 
 /* ---------- responses ---------- */
@@ -290,6 +293,31 @@ async function scan(env, s) {
   return json({ ok: true, channels, posts, links, ts, truncated, rateLow: !!(rate && rate.low), scannedAt: new Date(ts).toISOString() });
 }
 
+/* ---------- look back (read-only) ---------- */
+/* One query per organization: channels plus the last 90 sent posts, newest first. No post tokens are handed out,
+   so nothing read here can be passed to /api/fix; sent posts cannot be changed anyway. */
+async function lookback(env, s) {
+  const orgs = s.record.orgs.slice(0, MAX_LOOKBACK_CALLS);
+  if (!orgs.length) return json({ ok: true, channels: [], posts: [], orgsSkipped: 0, calls: 0, checkedAt: new Date().toISOString() });
+  const adm = await ask(env, { op: 'admit', kind: 'lookback', acct: s.record.acct, sk: s.sk, calls: orgs.length });
+  if (!adm.ok) return refusal(adm);
+  const channels = []; let posts = []; let rate = null; let calls = 0;
+  try {
+    for (const org of orgs) {
+      calls++;
+      const r = await gql(s.record.at, Q_LOOKBACK, { org: org.id, first: LOOKBACK_N });
+      rate = r.rate;
+      for (const c of (r.data.channels || []).slice(0, 100)) channels.push(Object.assign(shapeChannel(c), { org: org.name }));
+      for (const e of ((r.data.posts || {}).edges || [])) if (e && e.node) posts.push(shapeSent(e.node));
+    }
+  } finally {
+    await noteRate(env, rate);
+  }
+  const at = (p) => Date.parse(p.sentAt || p.dueAt || '') || 0;
+  posts = posts.filter((p) => p.status === 'sent').sort((a, b) => at(b) - at(a)).slice(0, LOOKBACK_N);
+  return json({ ok: true, channels, posts, calls, orgsSkipped: Math.max(0, s.record.orgs.length - orgs.length), checkedAt: new Date().toISOString() });
+}
+
 /* ---------- links ---------- */
 async function links(env, s, body) {
   const ts = Number(body.ts);
@@ -449,6 +477,7 @@ async function handle(request, env, ctx) {
   try { body = await readJson(request); } catch (e) { return fail(400, 'bad_input', e.message === 'too_large' ? 'Request too large.' : 'Bad request.'); }
   try {
     if (path === '/api/scan') return await scan(env, s);
+    if (path === '/api/lookback') return await lookback(env, s);
     if (path === '/api/links') return await links(env, s, body);
     if (path === '/api/fix') return await fix(env, s, body);
     if (path === '/api/disconnect') {

@@ -224,8 +224,11 @@ function eventMinutes(word, hh, mm, ap) {
 
 const FUTURE_CUE = /\b(join|register|sign[ -]?up|rsvp|tickets?|ends?|ending|until|till|deadline|due|starts?|starting|opens?|launch(?:es|ing)?|live|don'?t miss|see you|coming|upcoming|save the date|last (?:chance|day)|book|apply|sale|offer|webinar|event|happening|tune in|kicks? off|countdown|early bird|doors|reminder|only \d+ days?)\b/i;
 
-/* main entry: flags for one post */
-export function checkTime(post, channel, now) {
+/* main entry: flags for one post. opts.sent: the post already went out (Look back); dueAt is then the time it
+   was sent, and the wording is past tense. */
+export function checkTime(post, channel, now, opts) {
+  const S = !!(opts && opts.sent);
+  const went = S ? 'went' : 'goes';
   if (!post.dueAt) return [];
   const due = new Date(post.dueAt);
   if (isNaN(due)) return [];
@@ -261,10 +264,10 @@ export function checkTime(post, channel, now) {
         const sev = strong ? 'high' : ago > 31 ? 'low' : 'medium';
         flags.push({
           check: 'time', id: 'time.past_date', severity: sev, where: it.where, spans: [[dt.start, dt.end]],
-          title: 'Date will be in the past when this posts',
-          detail: '"' + dt.raw + '" is ' + ago + ' day' + (ago === 1 ? '' : 's') + ' before the send time, ' + when + '.' +
+          title: S ? 'Date was already past when this went out' : 'Date will be in the past when this posts',
+          detail: '"' + dt.raw + '" ' + (S ? 'was ' : 'is ') + ago + ' day' + (ago === 1 ? '' : 's') + ' before ' + (S ? 'the post went out' : 'the send time') + ', ' + when + '.' +
             (wasFuture ? ' It was still ahead when the post was written (' + fmtDay(created) + ').' : '') +
-            (strong ? '' : ' Fine if you are looking back; wrong if it is an invite or a deadline.'),
+            (strong ? '' : S ? ' Fine if the post looked back; wrong if it was an invite or a deadline.' : ' Fine if you are looking back; wrong if it is an invite or a deadline.'),
           fixes: [{ type: 'edit', label: 'Update the date' }, { type: 'draft' }]
         });
       }
@@ -292,8 +295,8 @@ export function checkTime(post, channel, now) {
       if (near && !weekRel && near.day !== atSend) {
         flags.push({
           check: 'time', id: 'time.relative_conflict', severity: 'high', where: it.where, spans: [[r.start, r.end], [near.start, near.end]],
-          title: '"' + r.raw + '" and "' + near.raw + '" will disagree',
-          detail: 'This posts ' + when + ', when "' + phrase + '" means ' + meaning + ', not ' + fmtDay(fromDayNum(near.day), send.y) + '.',
+          title: '"' + r.raw + '" and "' + near.raw + '" ' + (S ? 'disagreed' : 'will disagree'),
+          detail: (S ? 'This went out ' : 'This posts ') + when + ', when "' + phrase + '" ' + (S ? 'meant ' : 'means ') + meaning + ', not ' + fmtDay(fromDayNum(near.day), send.y) + '.',
           fixes: [{ type: 'edit', label: 'Fix the wording' }, { type: 'draft' }]
         });
         continue;
@@ -309,8 +312,8 @@ export function checkTime(post, channel, now) {
       } else if (atWrite != null && atWrite !== atSend) {
         flags.push({
           check: 'time', id: 'time.relative_shift', severity: 'low', where: it.where, spans: [[r.start, r.end]],
-          title: '"' + r.raw + '" will mean ' + meaning,
-          detail: 'Written ' + fmtDay(created, send.y) + ', when "' + phrase + '" meant ' + fmtDay(fromDayNum(atWrite), send.y) + '. Readers see it ' + when + ', when it means ' + meaning + '. Fine if that is what you intended.',
+          title: S ? '"' + r.raw + '" meant ' + meaning + ' when it went out' : '"' + r.raw + '" will mean ' + meaning,
+          detail: 'Written ' + fmtDay(created, send.y) + ', when "' + phrase + '" meant ' + fmtDay(fromDayNum(atWrite), send.y) + '. Readers ' + (S ? 'saw it ' : 'see it ') + when + ', when it ' + (S ? 'meant ' : 'means ') + meaning + '. Fine if that is what you intended.',
           fixes: [{ type: 'edit', label: 'Reword' }]
         });
       }
@@ -329,8 +332,8 @@ export function checkTime(post, channel, now) {
       if (mins <= sendMins) {
         flags.push({
           check: 'time', id: 'time.event_passed', severity: 'high', where: it.where, spans: [[m.index, m.index + m[0].length]],
-          title: 'The time in the post will have passed',
-          detail: '"' + m[0].trim() + '", but the post goes out at ' + fmtTime(send) + ' (' + tz + ').',
+          title: S ? 'The time in the post had already passed' : 'The time in the post will have passed',
+          detail: '"' + m[0].trim() + '", but the post ' + went + ' out at ' + fmtTime(send) + ' (' + tz + ').',
           fixes: [{ type: 'edit', label: 'Fix the time' }, { type: 'draft' }]
         });
       }
@@ -348,7 +351,7 @@ export function checkTime(post, channel, now) {
         flags.push({
           check: 'time', id: 'time.greeting', severity: 'medium', where: it.where, spans: [[gm.index, gm.index + gm[0].length]],
           title: '"' + gm[0] + '" at ' + fmtTime(send),
-          detail: 'The post goes out at ' + fmtTime(send) + ' ' + tz + ', which is ' + right + ' there.',
+          detail: 'The post ' + went + ' out at ' + fmtTime(send) + ' ' + tz + ', which is ' + right + ' there.',
           fixes: fixText && fixText !== text && it.where === 'text' ? [{ type: 'edit', label: 'Say "' + right + '"', text: fixText }] : [{ type: 'edit', label: 'Reword' }]
         });
       }
@@ -379,8 +382,8 @@ export function checkTime(post, channel, now) {
       }
       flags.push({
         check: 'time', id: 'time.wrong_day', severity: 'high', where: it.where, spans: [[h.start, h.end]],
-        title: '"' + h.raw + '" goes out on a ' + cap(DOW_LONG[send.dow]),
-        detail: 'This posts ' + when + '.',
+        title: '"' + h.raw + '" ' + went + ' out on a ' + cap(DOW_LONG[send.dow]),
+        detail: (S ? 'This went out ' : 'This posts ') + when + '.',
         fixes: fixText ? [{ type: 'edit', label: 'Say ' + cap(DOW_LONG[send.dow]), text: fixText }, { type: 'draft' }] : [{ type: 'edit', label: 'Reword' }, { type: 'draft' }]
       });
     }
@@ -393,7 +396,7 @@ export function checkTime(post, channel, now) {
         flags.push({
           check: 'time', id: 'time.holiday', severity: 'medium', where: it.where, spans: [[m.index, m.index + m[0].length]],
           title: '"' + m[0] + '" on ' + fmtDay(send, send.y),
-          detail: 'The post goes out ' + when + ', not close to ' + hd.name + '.',
+          detail: 'The post ' + went + ' out ' + when + ', not close to ' + hd.name + '.',
           fixes: [{ type: 'edit', label: 'Reword' }, { type: 'draft' }]
         });
       }

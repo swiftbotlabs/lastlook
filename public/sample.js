@@ -66,6 +66,38 @@ export function sampleQueue(now) {
   ];
 }
 
+/* Look back on /try: the studio's last 14 sent posts, newest first; 8 of them hold something to catch */
+export function sampleSent(now) {
+  const t = localParts(now || new Date(), SAMPLE_TZ);
+  /* the latest day at least `min` days ago that falls on weekday `dow` */
+  const lastDow = (dow, min) => { let n = t.day - min; while (fromDayNum(n).dow !== dow) n--; return n; };
+  const S = (id, channelId, service, day, hh, mm, text, extra) => {
+    const sentAt = zoned(day, hh, mm);
+    return Object.assign({
+      id, channelId, channelService: service, status: 'sent', dueAt: sentAt, sentAt, createdAt: new Date(Date.parse(sentAt) - 2 * 3600e3).toISOString(),
+      updatedAt: sentAt, shareMode: 'customScheduled', isCustomScheduled: true, schedulingType: null, allowedActions: [], publishError: null,
+      assets: [], thread: [], linkAttachment: null, firstComment: null, pinUrl: null, externalLink: null, text
+    }, extra || {});
+  };
+  const HOURS = 'Studio hours this week: Tue to Sat, 10am to 6pm. Walk-ins welcome, and the kettle is always on.';
+  return [
+    S('h-hours', 'kiln-bsky', 'bluesky', t.day - 1, 10, 0, HOURS),
+    S('h-mugs', 'kiln-x', 'twitter', t.day - 2, 9, 30, 'Fresh batch of speckled mugs drying on the shelves. They go in the kiln on Thursday.'),
+    S('h-morning', 'kiln-li', 'linkedin', t.day - 3, 18, 40, 'Good morning from the studio! The kiln is cooling and the first plates of the new dinner set come out tomorrow.'),
+    S('h-friday', 'kiln-x', 'twitter', lastDow(3, 4), 12, 15, 'Happy Friday! The new celadon glazes are up in the shop, in three sizes.'),
+    S('h-tiles', 'kiln-ig', 'instagram', t.day - 4, 12, 0, 'Glaze day. Twelve new test tiles, one clear favourite. Which would you pick?', { assets: [{ type: 'image', altText: '' }] }),
+    S('h-news', 'kiln-li', 'linkedin', t.day - 5, 11, 0, '**Studio news**: our Saturday wheel classes now run in two sessions, 10am and 2pm, so more of you get a seat at the wheel.'),
+    S('h-raffle', 'kiln-x', 'twitter', t.day - 6, 17, 0, 'Last call for the pottery raffle! Every ticket helps fund free classes for local schools. Enter here: [link]'),
+    S('h-hours-2', 'kiln-bsky', 'bluesky', t.day - 8, 10, 0, HOURS),
+    S('h-doors', 'kiln-bsky', 'bluesky', t.day - 9, 19, 5, 'Doors open today at 6pm for the open studio. Tea, demos and a peek inside the kiln. See you there!'),
+    S('h-library', 'kiln-li', 'linkedin', t.day - 10, 12, 0, 'We are teaching a beginner course at the Riverside library this month. Thank you to the librarians for having us.'),
+    S('h-bowls', 'kiln-ig', 'instagram', t.day - 11, 12, 0, 'A shelf of finished bowls in our oat glaze.', { assets: [{ type: 'image', altText: 'Twelve cream-coloured stoneware bowls stacked on a wooden shelf' }] }),
+    S('h-blog', 'kiln-bsky', 'bluesky', t.day - 12, 15, 0, 'New on the blog: how we mix our glazes, with the recipes for oat and moss. https://littlekiln.example/blog/glazes'),
+    S('h-thanks', 'kiln-x', 'twitter', t.day - 13, 9, 30, 'Thank you to everyone who came to the Riverside Makers Market. We sold out of mugs by noon!'),
+    S('h-500', 'kiln-li', 'linkedin', t.day - 14, 11, 0, 'We just passed 500 students since opening the studio. Thank you for making things with us.')
+  ].sort((a, b) => Date.parse(b.sentAt) - Date.parse(a.sentAt));
+}
+
 /* what the link checker would have answered for each sample link (the domains are reserved .example names, so
    these results are part of the sample, never fetched); flag = linkFlag(result) from src/net.js */
 const LINK_FIXES = [{ type: 'edit', label: 'Replace the link' }, { type: 'draft' }];
@@ -124,6 +156,10 @@ export class SampleBackend {
       results.push(Object.assign({ url: it.url }, clone(s.result), { hops: s.result.hops.length, flag: s.flag ? clone(s.flag) : null }));
     }
     return { ok: true, results };
+  }
+  /* the same answer shape as POST /api/lookback (no Buffer calls: calls 0) */
+  async lookback() {
+    return { ok: true, sample: true, channels: clone(SAMPLE_CHANNELS), posts: sampleSent(this.now()), calls: 0, orgsSkipped: 0, checkedAt: this.now().toISOString() };
   }
   /* the same checks as POST /api/fix, applied to the sample */
   async fix(body) {

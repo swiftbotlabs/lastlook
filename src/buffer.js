@@ -1,5 +1,6 @@
 /* Buffer GraphQL API client (https://api.buffer.com). Every call carries the user's OAuth access token.
-   Request budget: one call per scan page (channels + posts together), two per fix (re-read + mutation).
+   Request budget: one call per scan page (channels + posts together), two per fix (re-read + mutation),
+   one per organization for Look back (channels + the last 90 sent posts together; a query, never a mutation).
    Rate-limit headers are read on every response so the app slows down before Buffer has to say no. */
 
 export const API = 'https://api.buffer.com';
@@ -124,6 +125,14 @@ export function scanQuery(withChannels) {
 }
 export const Q_POST = `query One($id: PostId!) { post(input: { id: $id }) { ${POST_FIELDS} } }`;
 
+/* Look back: the most recent sent posts, newest first (read-only) */
+export const Q_LOOKBACK = `query LookBack($org: OrganizationId!, $first: Int!) {
+  channels(input: { organizationId: $org }) { ${CHANNEL_FIELDS} }
+  posts(first: $first, input: { organizationId: $org, filter: { status: [sent] }, sort: [{ field: dueAt, direction: desc }] }) {
+    edges { node { ${POST_FIELDS} sentAt externalLink } }
+  }
+}`;
+
 /* the mutation result carries the whole post, so the page can update that one post without a new scan */
 const RESULT = '__typename ... on PostActionSuccess { post { ' + POST_FIELDS + ' } } ... on MutationError { message }';
 export const M_EDIT_TEXT = `mutation EditText($id: PostId!, $text: String!) { editPost(input: { id: $id, text: $text }) { ${RESULT} } }`;
@@ -152,6 +161,19 @@ export function shapePost(n) {
     firstComment: md.firstComment ? String(md.firstComment) : null,
     pinUrl: md.url ? String(md.url) : null
   };
+}
+/* a sent post: the shaped post plus when it went out and the https link to it on the network (else null) */
+export function publicLink(v) {
+  try {
+    const u = new URL(String(v || ''));
+    if (u.protocol !== 'https:' || u.username || u.password) return null;
+    return u.href.length <= 600 ? u.href : null;
+  } catch (e) { return null; }
+}
+export function shapeSent(n) {
+  const p = shapePost(n);
+  const t = n.sentAt && !isNaN(Date.parse(n.sentAt)) ? new Date(n.sentAt).toISOString() : null;
+  return Object.assign(p, { sentAt: t, externalLink: publicLink(n.externalLink), allowedActions: [] });
 }
 /* channel avatars are shown only from Buffer's own image hosts (the page's CSP allows only these) */
 export const AVATAR_HOSTS = ['buffer-channel-avatars-bucket.s3.amazonaws.com'];

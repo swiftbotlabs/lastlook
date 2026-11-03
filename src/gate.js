@@ -5,17 +5,17 @@
    - the app-wide Buffer allowance, fed by the RateLimit headers of every Buffer response; new scans and fixes are
      refused when the 15-minute or 24-hour window runs low, sign-ins keep a smaller reserve;
    - per-account budgets: one scan per 60 s, 20 scans, 40 fixes, 300 link checks and 20 sign-ins per UTC day,
-     10 fixes and 30 link batches per minute;
+     10 fixes and 30 link batches per minute; one Look back per 2 minutes and 6 per day;
    - link-check limits: one check per account per URL per 60 s, 20 checks per minute per target site across all users.
    Nothing here holds post text, links in clear (URLs are hashed), tokens or session ids. */
 
 export const LIMITS = {
-  scanGapMs: 60000,
-  scansPerDay: 20, fixesPerDay: 40, linksPerDay: 300, signinsPerDay: 20,
+  scanGapMs: 60000, lookbackGapMs: 120000,
+  scansPerDay: 20, fixesPerDay: 40, linksPerDay: 300, signinsPerDay: 20, lookbacksPerDay: 6,
   fixesPerMin: 10, linkBatchesPerMin: 30,
   urlGapMs: 60000, sitePerMin: 20,
   /* keep this many requests of Buffer's per-app allowance free (15-minute window, 24-hour window) */
-  margin: { scan: [20, 150], fix: [20, 150], signin: [5, 30] }
+  margin: { scan: [20, 150], fix: [20, 150], lookback: [20, 150], signin: [5, 30] }
 };
 const W15 = 900, W24 = 86400;
 
@@ -33,7 +33,7 @@ export class GateCore {
   async account(acct) {
     const a = (await this.storage.get('a:' + acct)) || {};
     const today = day(this.now());
-    if (a.day !== today) Object.assign(a, { day: today, scans: 0, fixes: 0, links: 0, signins: 0 });
+    if (a.day !== today) Object.assign(a, { day: today, scans: 0, fixes: 0, links: 0, signins: 0, lookbacks: 0 });
     return a;
   }
   async saveAccount(acct, a) { await this.storage.put('a:' + acct, a); }
@@ -82,6 +82,10 @@ export class GateCore {
       if (a.lastScan && now - a.lastScan < LIMITS.scanGapMs) return this.refuse('scan_gap', 'You scanned less than a minute ago.', (LIMITS.scanGapMs - (now - a.lastScan)) / 1000);
       if (a.scans >= LIMITS.scansPerDay) return this.refuse('scan_budget', 'That is today’s limit of ' + LIMITS.scansPerDay + ' scans for your account.', 3600);
       a.scans++; a.lastScan = now;
+    } else if (op === 'lookback') {
+      if (a.lastLookback && now - a.lastLookback < LIMITS.lookbackGapMs) return this.refuse('lookback_gap', 'You looked back less than two minutes ago.', (LIMITS.lookbackGapMs - (now - a.lastLookback)) / 1000);
+      if ((a.lookbacks || 0) >= LIMITS.lookbacksPerDay) return this.refuse('lookback_budget', 'That is today’s limit of ' + LIMITS.lookbacksPerDay + ' look-backs for your account.', 3600);
+      a.lookbacks = (a.lookbacks || 0) + 1; a.lastLookback = now;
     } else if (op === 'fix') {
       if (a.fixes >= LIMITS.fixesPerDay) return this.refuse('fix_budget', 'That is today’s limit of ' + LIMITS.fixesPerDay + ' fixes for your account.', 3600);
       const wait = this.perMinute(acct + '|fix', LIMITS.fixesPerMin);

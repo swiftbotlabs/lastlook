@@ -23,6 +23,10 @@ Live: https://lastlook.swiftbotlab.workers.dev · No-login demo: https://lastloo
 
 Every rule is plain code that runs in the browser (`src/checks/`, copied to `public/checks/` by `ops/build.sh`). There is no AI model in the product, so the same post always gets the same answer.
 
+## Look back
+
+After you connect, the Look back tab reads your most recent sent posts (up to 90) and runs the text checks on them: formatting the network showed as raw text, length counted the network's way, leftover placeholders, the same post sent twice on one channel, day and time words judged against the moment the post actually went out (`sentAt`) in the channel's time zone, and images sent without alt text. The headline reads "Last Look would have caught N issues in your last M sent posts", grouped by check, each linking to the post. It only reads: sent posts carry no fix tokens, and their links are listed, not opened (old links cannot be edited, and fetching them would spend the link-check budget the live queue needs). The rules are the same modules as the queue checks (`src/checks/lookback.js` wraps them with past-tense wording).
+
 ## Fixes
 
 - **Edit text**: a suggested version where one can be made (cleaned formatting, the right weekday, the right greeting, a fixed hashtag), or your own edit, with a live character count for the channel and a word-by-word diff. Only the text changes; the schedule stays.
@@ -36,8 +40,9 @@ Before any write, the server reads the post again and refuses if the text change
 - OAuth 2.0 Authorization Code with PKCE (S256), confidential client, scopes `account:read posts:read posts:write`.
 - `account { organizations }` once at sign-in.
 - One GraphQL request per scan page: `channels` and `posts(filter: { status: [scheduled, needs_approval, draft] }, sort: dueAt asc)` together, 100 posts per page, at most 3 requests per scan.
+- Look back: one request per organization (first two organizations): `channels` and `posts(filter: { status: [sent] }, sort: dueAt desc, first: 90)` with `sentAt` and `externalLink`. A query only; one per account every two minutes, six a day.
 - Fixes: `post(input: { id })` to re-read, then `editPost(input: { id, text })`, `editPost(input: { id, text, saveToDraft: true })` or `movePostInQueue(input: { id, position })`. The mutation returns the whole post, so the page updates that post without a new scan.
-- A Durable Object (`src/gate.js`) guards the per-app allowance: it records the `RateLimit` headers of every Buffer response and refuses new scans and fixes when fewer than 20 requests (15-minute window) or 150 (24-hour window) remain; sign-ins keep a smaller reserve. Per account: one scan a minute, 20 scans, 40 fixes, 300 link checks and 20 sign-ins a day, one live session at a time.
+- A Durable Object (`src/gate.js`) guards the per-app allowance: it records the `RateLimit` headers of every Buffer response and refuses new scans and fixes when fewer than 20 requests (15-minute window) or 150 (24-hour window) remain; sign-ins keep a smaller reserve. Per account: one scan a minute, 20 scans, 40 fixes, 300 link checks, 6 look-backs (one per 2 minutes) and 20 sign-ins a day, one live session at a time. A sign-in (1 request), a full scan (1-3) and a look-back (1-2) together stay within the 10 requests per 15 minutes that each authorized user adds to the app's allowance.
 
 ## Development
 
