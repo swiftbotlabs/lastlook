@@ -6,7 +6,8 @@ What the app protects: each user's Buffer access token and their queued posts, a
 - Authorization Code + PKCE (S256), confidential client: the client secret exists only as a Worker secret and is sent only to `auth.buffer.com/token`.
 - `state` = random nonce + HMAC tag. It and the PKCE verifier travel in a 10-minute AES-GCM sealed, HttpOnly, Secure, SameSite=Lax `__Host-` cookie. The callback refuses a missing or expired cookie, a state that does not match it, and a wrong HMAC tag, before any token request.
 - Redirect URI is a constant; there is no user-controlled redirect anywhere.
-- A sign-in spends one Buffer request, so it asks the gate first (smaller reserve than scans) and counts toward a per-account daily limit (20). `/oauth/start` already peeks at the allowance (nothing reserved) and shows a calm "short pause" page with a retry estimate instead of sending the visitor through Buffer's consent screen for nothing.
+- Each sign-in attempt is single-use: right after the state checks, the callback records a hash of the state's nonce in the gate, for at least the cookie's 10 minutes (cleared within 30 by the next sign-in or the gate's alarm), and refuses a second callback with the same nonce before any token request.
+- A sign-in spends one Buffer request (the account query). Before the token exchange the callback only peeks at the app allowance; the request is reserved only after Buffer has returned a real access token, just before the account query. Forged or replayed codes therefore cost the shared allowance nothing (each forged attempt still costs one refused request to Buffer's token endpoint, and needs its own `/oauth/start`). Sign-ins keep a smaller reserve than scans and count toward a per-account daily limit (20) and the per-account request budget. `/oauth/start` peeks too (nothing reserved) and shows a calm "short pause" page with a retry estimate instead of sending the visitor through Buffer's consent screen for nothing.
 
 ## Sessions and tokens
 - Session id: 32 random bytes in a `__Host-` cookie (HttpOnly, Secure, SameSite=Lax, at most 1 hour).
@@ -15,16 +16,17 @@ What the app protects: each user's Buffer access token and their queued posts, a
 - No refresh tokens (`offline_access` is not requested). Buffer 401 deletes and unregisters the session.
 
 ## Shared Buffer allowance (availability)
-- The gate records Buffer's `RateLimit` headers from every response (15-minute and 24-hour windows) and reserves the calls an operation may spend before it runs. Scans and fixes are refused below 20 / 150 remaining; sign-ins below 5 / 30.
-- Per account (by account hash, not session): one scan per 60 s, 20 scans, 40 fixes, 300 link checks, 20 sign-ins per UTC day, 10 fixes and 30 link batches per minute.
+- The gate records Buffer's `RateLimit` headers from every response (15-minute and 24-hour windows) and holds the calls an operation may spend before it runs. The operation's own Buffer reply settles its hold; calls reserved but not made go back; a hold that no reply settles lapses after 30 s. Scans and fixes are refused below 20 / 150 remaining; sign-ins below 5 / 30.
+- Per account (by account hash, not session): one budget of real Buffer requests, 15 per 15 minutes and 60 per UTC day, for sign-ins, scans, Look backs, fixes and undos together; on top of it one scan per 60 s, 20 scans, 40 fixes, 300 link checks, 20 sign-ins per UTC day, 10 fixes and 30 link batches per minute.
 - A scan spends at most 3 Buffer requests; a Look back at most 2 (one per organization, first two), at most once per 2 minutes and 6 times a day per account, with the same app-wide margins as scans.
 - Look back is a query only (`status: [sent]`). Its posts carry no post token, so none of them can be passed to `/api/fix`; the `externalLink` it shows is kept only when it parses as an `https:` URL without credentials (checked again in the browser). Links in sent posts are never fetched. After a fix, the page updates that one post from the mutation result instead of rescanning.
 - `/api/fix` spends a Buffer request only on a post id the session's own scan returned: each scanned post carries an HMAC token bound to the session and scan time (1 hour); anything else is refused with no Buffer call.
-- Per IP: 120 page and API requests per minute (Workers rate-limiting binding), checked before any session lookup; sign-in 10 per minute.
+- Per IP: 120 page and API requests per minute (Workers rate-limiting binding), checked before any session lookup; sign-in (start and callback) 10 per minute. The key is the IPv4 address or, for IPv6, the /64 prefix (one host or line usually holds a whole /64), hashed before it reaches the limiter.
 
 ## Requests from the browser
 - Every POST needs the session cookie, `Origin: https://lastlook.swiftbotlab.workers.dev`, `content-type: application/json` and the per-session CSRF token (constant-time compare).
-- Bodies capped at 64 KB while streaming; ids `^[A-Za-z0-9_-]{6,64}$`; new text 1-30,000 characters, no control characters.
+- Bodies capped at 64 KB while streaming; ids `^[A-Za-z0-9_-]{6,64}$`; an edit's new text 1-30,000 characters, no control characters. Undo does not take new text: it restores the exact previous text, whose SHA-256 must match the one bound into the undo token (the text the server re-read before the edit).
+- The page paces itself: every pause waits for the server's `Retry-After`, or a minute when there is none; a first scan refused for a short pause is retried by itself once (the flag clears only after a successful scan); a link to `/#lookback` opens the tab but reads nothing until a click, and tab clicks wait out a running countdown; a refused link check is retried once, then shown as not checked.
 
 ## Writes to Buffer
 - Only `editPost` (text, or text + saveToDraft) and `movePostInQueue` exist in the code. No create, publish, share-now or delete path.
@@ -55,5 +57,5 @@ What the app protects: each user's Buffer access token and their queued posts, a
 
 ## Known limits
 - Cloudflare's rate-limiting binding counts per data center, so per-IP limits are looser than configured; the account and app-wide limits live in the Durable Object and are exact.
-- The gate is a single Durable Object: every API call passes through it. Fine at this scale; it would need sharding by account for heavy traffic.
+- The gate is a single Durable Object: every API call passes through it. Fine at this scale; it would need sharding by account for heavy traffic. Holds live in its memory; if the object is evicted they are dropped, and Buffer's next reply sets the true count again.
 - Buffer's per-app allowance is small (100 + 10 per authorized user per 15 minutes); a higher limit has to be requested from Buffer.

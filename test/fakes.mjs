@@ -17,7 +17,8 @@ export function gateNamespace() {
     calls: 0,
     obj,
     idFromName: (n) => n,
-    get: () => ({ fetch: async (url, init) => { ns.calls++; return obj.fetch(new Request(url, init)); } })
+    ops: [],
+    get: () => ({ fetch: async (url, init) => { ns.calls++; try { const m = JSON.parse(init.body); ns.ops.push(m.op + (m.kind ? ':' + m.kind : '')); } catch (e) { /* not json */ } return obj.fetch(new Request(url, init)); } })
   };
   return ns;
 }

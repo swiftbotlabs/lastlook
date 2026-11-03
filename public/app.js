@@ -19,8 +19,10 @@ const LINK_TTL = 10 * 60 * 1000;
 
 const SCAN_GAP_MS = 60000;
 const state = { raw: null, data: null, filter: 'flagged', notes: false, links: new Map(), linkQueue: [], linkRunning: false, busy: false, dialog: null, nextScanAt: 0,
-  scanError: null, ended: false, view: 'queue', back: null, backBusy: false, backError: null,
+  scanError: null, autoRetryUsed: false, ended: false, view: 'queue', back: null, backBusy: false, backError: null, backRetryAt: 0,
   undos: new Map(), undoBar: null };
+/* seconds to wait after a refusal: the server's Retry-After, or a minute when there is none (never zero) */
+export const waitFor = (retryAfter) => Math.min(3600, Math.max(5, Math.ceil(Number(retryAfter) || 60)));
 
 /* run the checks on the current raw scan (after a scan, and after each fix) */
 function recompute() {
@@ -159,7 +161,9 @@ const CALM = {
   lookback_budget: 'That is today’s Look back limit for your account.',
   fix_rate: 'That was a lot of changes in one minute.',
   fix_budget: 'That is today’s limit of fixes for your account.',
-  link_rate: 'Link checks are paced for a moment.'
+  link_rate: 'Link checks are paced for a moment.',
+  call_rate: 'Your account has made many Buffer requests in the last 15 minutes.',
+  call_budget: 'That is today’s Buffer request limit for your account.'
 };
 export function retryText(sec, now) {
   const s = Math.max(1, Math.ceil(Number(sec) || 60));
@@ -351,7 +355,7 @@ async function loadBack() {
   } catch (e) {
     if (e.status === 401) { state.backBusy = false; return sessionEnded(); }
     state.backError = e;
-    state.backRetryAt = e.retryAfter ? Date.now() + Math.min(e.retryAfter, 3600) * 1000 : 0;
+    state.backRetryAt = isCalm(e) || e.retryAfter ? Date.now() + waitFor(e.retryAfter) * 1000 : 0;
   }
   state.backBusy = false;
   render();
@@ -375,6 +379,13 @@ function renderBack() {
       q.append(problemBanner(state.backError));
       q.append(el('p', null, el('button', { type: 'button', class: 'btn', id: 'back-retry', onclick: () => loadBack() }, 'Try again')));
       retryButton();
+      return;
+    }
+    if (!state.backBusy) {
+      /* opened from a link (#lookback): nothing is read until the user asks */
+      $('headline').textContent = 'Look back at sent posts';
+      $('subline').textContent = 'Last Look reads your most recent sent posts (up to 90) and shows what it would have caught. Read-only.';
+      q.append(el('p', null, el('button', { type: 'button', class: 'btn btn-primary', id: 'back-go', onclick: () => loadBack() }, 'Look back now')));
       return;
     }
     $('headline').textContent = 'Looking back…';
@@ -444,12 +455,14 @@ function renderSent(p, ch) {
   }
   return art;
 }
-function setView(v) {
+/* a tab click reads at once, except while a refusal's countdown runs; opening from a link (load: false) waits for a click */
+function setView(v, opts) {
+  const load = !opts || opts.load !== false;
   state.view = v === 'back' ? 'back' : 'queue';
   $('v-queue').setAttribute('aria-pressed', String(state.view === 'queue'));
   $('v-back').setAttribute('aria-pressed', String(state.view === 'back'));
   try { history.replaceState(null, '', state.view === 'back' ? '#lookback' : location.pathname); } catch (e) { /* not important */ }
-  if (state.view === 'back' && !state.back && !state.backBusy) { loadBack(); return; }
+  if (state.view === 'back' && load && !state.back && !state.backBusy && Date.now() >= state.backRetryAt) { loadBack(); return; }
   render();
   if (state.view === 'queue' && state.data) $('links-status').textContent = state.linkRunning ? $('links-status').textContent : linkSummary();
 }
@@ -651,6 +664,7 @@ async function doScan(quiet) {
     for (const p of d.posts) p.pts = d.ts;
     state.raw = d;
     state.scanError = null;
+    state.autoRetryUsed = false;
     state.nextScanAt = MODE === 'try' ? 0 : Date.now() + SCAN_GAP_MS;
     recompute();
     const now = Date.now();
@@ -661,7 +675,8 @@ async function doScan(quiet) {
     runLinks();
   } catch (e) {
     if (e.status === 401) return sessionEnded();
-    if (e.retryAfter) state.nextScanAt = Date.now() + Math.min(e.retryAfter, 3600) * 1000;
+    /* every pause waits (Retry-After, or a minute without one); other errors wait only when the server says so */
+    if (isCalm(e) || e.retryAfter) state.nextScanAt = Date.now() + waitFor(e.retryAfter) * 1000;
     state.scanError = e;
     if (state.view === 'queue') render();
   } finally {
@@ -669,17 +684,18 @@ async function doScan(quiet) {
     scanButton();
   }
 }
-/* a first scan refused for a short pause runs again by itself once, when the wait is over (waits up to 2 minutes) */
+/* a first scan refused for a short pause runs again by itself once, when the wait is over (waits up to 2 minutes);
+   the one-shot flag is cleared only by a scan that succeeds */
 function canAutoRetry() {
   const e = state.scanError;
-  return MODE === 'live' && !state.data && !!e && isCalm(e) && (e.retryAfter || 60) <= 120 && state.autoRetried !== e;
+  return MODE === 'live' && !state.data && !!e && isCalm(e) && (e.retryAfter || 60) <= 120 && !state.autoRetryUsed;
 }
 /* the server allows one scan a minute: the button counts down instead of failing */
 function scanButton() {
   const b = $('rescan');
   if (state.busy) return;
   const left = Math.ceil((state.nextScanAt - Date.now()) / 1000);
-  if (left <= 0 && canAutoRetry()) { state.autoRetried = state.scanError; doScan(false); return; }
+  if (left <= 0 && canAutoRetry()) { state.autoRetryUsed = true; doScan(false); return; }
   if (left > 0) { b.disabled = true; b.textContent = 'Scan again in ' + left + ' s'; } else { b.disabled = false; b.textContent = T('Scan again', 'Reset sample'); }
 }
 async function runLinks() {
@@ -701,7 +717,13 @@ async function runLinks() {
       let res;
       try { res = await backend.checkLinks({ ts, items: batch.map((b) => ({ url: b.url, sig: b.sig })) }); } catch (e) {
         if (e.status === 401) return sessionEnded();
-        if (e.status === 429 && (e.retryAfter || 10) <= 60 && !batch.retried) { batch.retried = true; state.linkQueue.unshift(...batch); await new Promise((r) => setTimeout(r, Math.max(5, e.retryAfter || 10) * 1000)); continue; }
+        /* one retry per link: the mark sits on the queued items, which survive the re-queue */
+        if (e.status === 429 && (e.retryAfter || 10) <= 60 && batch.every((b) => !b.retried)) {
+          for (const b of batch) b.retried = true;
+          state.linkQueue.unshift(...batch);
+          await new Promise((r) => setTimeout(r, Math.max(5, e.retryAfter || 10) * 1000));
+          continue;
+        }
         for (const b of batch) state.links.set(b.url, { at: Date.now(), flag: unchecked(b.url, e.status === 410 ? 'the check expired; scan again to check it' : e.message) });
         done += batch.length; continue;
       }
@@ -788,7 +810,8 @@ async function init() {
   setInterval(undoTick, 1000);
   setInterval(retryButton, 1000);
   $('undo-btn').addEventListener('click', () => { if (state.undoBar) doUndo(state.undoBar); });
-  if (location.hash === '#lookback') setView('back');
+  /* a link to #lookback opens the tab; on a real account the read waits for a click (the sample loads at once) */
+  if (location.hash === '#lookback') setView('back', { load: MODE === 'try' });
   doScan(false);
 }
 if (typeof document !== 'undefined' && document.getElementById('queue')) init();

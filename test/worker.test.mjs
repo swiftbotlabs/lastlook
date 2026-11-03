@@ -383,10 +383,15 @@ test('fix draft sends the checked text with saveToDraft; move works for queue-sl
 
 test('fix budgets: 10 a minute and 40 a day per account', async () => {
   const { env, s, base } = await fixSetup(POST_NODE());
-  const codes = [];
-  for (let i = 0; i < 12; i++) codes.push((await worker.fetch(post('/api/fix', s, Object.assign({}, base, { action: 'draft' })), env)).status);
-  assert.deepEqual(codes.slice(10), [429, 429]);
   const core = env.GATE.obj.core;
+  const codes = [];
+  for (let i = 0; i < 12; i++) {
+    /* this test is about the per-minute fix rule, so the account's 15-minute call budget is reset each time */
+    const acc = await core.account(s.acct); acc.q15 = null; await core.saveAccount(s.acct, acc);
+    const r = await worker.fetch(post('/api/fix', s, Object.assign({}, base, { action: 'draft' })), env);
+    codes.push(r.status + (r.status === 429 ? ':' + (await r.json()).error : ''));
+  }
+  assert.deepEqual(codes, ['200', '200', '200', '200', '200', '200', '200', '200', '200', '200', '429:fix_rate', '429:fix_rate']);
   const a = await core.account(s.acct); a.fixes = 40; await core.saveAccount(s.acct, a);
   core.minute.clear();
   const r = await worker.fetch(post('/api/fix', s, Object.assign({}, base, { action: 'draft' })), env);

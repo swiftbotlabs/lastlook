@@ -178,8 +178,9 @@ export function privacyPage() {
   <h2>What is stored, and for how long</h2>
   <ul>
     <li><strong>Your session</strong> (encrypted with AES-256-GCM, under a key that needs both our server secret and the random session id held only in your browser’s cookie): your Buffer access token and its expiry, a security token for your browser, a one-way hash of your Buffer account id, your organizations’ ids and names (up to five), your Buffer display name, whether Buffer granted editing, and when the session started. It lives at most one hour, matching Buffer’s access token.</li>
-    <li><strong>Usage counters</strong>, stored under the one-way hash of your account id: a hash of your current session id, the time of your last scan and last Look back, and today’s number of scans, Look backs, fixes, link checks and sign-ins. They contain no content and reset every day (UTC); they let us limit use so the app stays available to everyone.</li>
-    <li><strong>For one minute only</strong>: a hash of each link we checked for you (so the same link is not fetched twice within a minute) and, per linked website (for example “example.com”), how many checks it received in that minute across all users.</li>
+    <li><strong>Usage counters</strong>, stored under the one-way hash of your account id: a hash of your current session id, the time of your last scan and last Look back, today’s number of scans, Look backs, fixes, link checks and sign-ins, and how many Buffer requests were made for your account today and in the current 15 minutes. They contain no content and reset every day (UTC); they let us limit use so the app stays available to everyone.</li>
+    <li><strong>For one minute only</strong>: a hash of each link we checked for you (so the same link is not fetched twice within a minute) and, per linked website (for example “example.com”), how many checks it received in that minute across all users. Cloudflare’s rate limiter also counts requests per network for a minute, under a one-way hash of your IP address (for IPv6, of its /64 block); the address itself is not stored.</li>
+    <li><strong>For at most 30 minutes</strong>: a one-way hash of each sign-in attempt’s one-time value, so the same sign-in response cannot be used twice.</li>
     <li><strong>App-wide</strong>: how many requests Buffer still allows this app, read from Buffer’s replies.</li>
     <li><strong>In your browser</strong>: one cookie with the session id (HttpOnly, Secure, SameSite=Lax). During sign-in a second cookie lives for at most 10 minutes with one-time sign-in values.</li>
   </ul>
@@ -200,7 +201,7 @@ export function privacyPage() {
   <p>Press <strong>Disconnect</strong> and your session is refused from that moment; its record, with the Buffer token, is deleted from our store right after (within seconds), and a cached copy can linger in Cloudflare’s storage for up to about a minute without being usable. Signing in again also ends any older Last Look session of the same Buffer account. To revoke Last Look’s access on Buffer’s side, remove it from the connected apps in your Buffer account settings.</p>
 
   <h2>Limits</h2>
-  <p>To keep Last Look available for everyone: one scan a minute, 20 scans and 40 fixes a day per account, one Look back every two minutes and 6 a day, and new requests pause when Buffer’s request allowance for this app runs low.</p>
+  <p>To keep Last Look available for everyone: one scan a minute, 20 scans and 40 fixes a day per account, one Look back every two minutes and 6 a day, at most 15 Buffer requests per 15 minutes and 60 a day per account, and new requests pause when Buffer’s request allowance for this app runs low.</p>
 
   <h2>Who runs it</h2>
   <p>Swift Bot Labs, contact <a href="mailto:swiftbotlabs@gmail.com">swiftbotlabs@gmail.com</a>. Last Look runs on Cloudflare Workers. It is not made by or affiliated with Buffer.</p>
@@ -232,7 +233,7 @@ export function aboutPage() {
   <p>After you connect, the Look back tab reads your most recent sent posts (up to 90, one request per organization) and runs the text checks on them, each judged at the moment it actually went out in its channel’s time zone: formatting that showed as raw text, posts longer than the network allows, leftover placeholders, the same post sent twice, day and time words that were wrong when it went out, and images sent without alt text. The result reads “Last Look would have caught N issues in your last M sent posts”, grouped by check, each linking to the post. It only reads: sent posts cannot be changed, and their links are not opened.</p>
   <h2>Limits</h2>
   <ul>
-    <li>Up to 300 queued posts per scan (three requests to Buffer), one scan a minute, 20 scans and 40 fixes a day per account.</li>
+    <li>Up to 300 queued posts per scan (three requests to Buffer), one scan a minute, 20 scans and 40 fixes a day per account, and at most 15 Buffer requests per 15 minutes and 60 a day per account.</li>
     <li>Some sites block automated visitors; those links are marked as “probably fine, open it once” rather than broken.</li>
     <li>Day words are a judgment call. When a post has its own fixed time, Last Look only notes what “tomorrow” will mean, it does not call it wrong.</li>
   </ul>

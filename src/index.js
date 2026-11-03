@@ -16,7 +16,7 @@ import { gql, BufferError, Q_ACCOUNT, scanQuery, Q_POST, Q_LOOKBACK, M_EDIT_TEXT
 import { postLinks } from './checks/index.js';
 import { clearUrlCache } from './checks/text.js';
 import { checkLink, linkFlag, siteOf } from './net.js';
-import { parseIP } from './ip.js';
+import { parseIP, formatIPv4, expandIPv6 } from './ip.js';
 import { gate } from './gate.js';
 import { createSession, readSession, deleteSession, deleteSessionByKey, setCookie, clearCookie, parseCookies, sealJSON, openJSON, randomToken, sha256, sha256hex, b64url, hmac, signer, safeEqual, SESSION_COOKIE, OAUTH_COOKIE } from './session.js';
 import { landingPage, appPage, tryPage, privacyPage, aboutPage, errorPage, retryHint } from './pages.js';
@@ -84,7 +84,17 @@ async function limited(env, binding, key, limit) {
   return e.n > limit;
 }
 export function _resetLimits() { memLimits.clear(); }
-const clientIp = (request) => request.headers.get('cf-connecting-ip') || 'unknown';
+/* the rate-limit bucket of a client address: the IPv4 address, or the /64 prefix for IPv6 (one host or line
+   usually holds a whole /64, so per-address keys would hand out a fresh allowance per address) */
+export function ipBucket(raw) {
+  const p = parseIP(String(raw || '').slice(0, 64));
+  if (!p) return 'unknown';
+  if (p.version === 4) return formatIPv4(p.value);
+  if ((p.value >> 32n) === 0xffffn) return formatIPv4(p.value & 0xffffffffn);   /* IPv4-mapped */
+  return expandIPv6(p.value).split(':').slice(0, 4).join(':') + '::/64';
+}
+/* rate-limit keys are hashed, so no address is handed to the limiter in clear */
+const clientKey = async (request) => (await sha256hex('lastlook-ip:' + ipBucket(request.headers.get('cf-connecting-ip')))).slice(0, 32);
 
 /* run a slow store write after the response when the runtime allows it (tests have no ctx: wait for it) */
 async function later(ctx, promise) {
@@ -96,9 +106,11 @@ async function later(ctx, promise) {
 async function ask(env, msg) {
   try { return await gate(env, msg); } catch (e) { return { ok: false, code: 'gate_down', message: 'Last Look is busy. Try again in a minute.', retryAfter: 60 }; }
 }
-async function noteRate(env, rate) {
-  if (!rate || !rate.windows || !Object.keys(rate.windows).length) return;
-  await ask(env, { op: 'record', windows: rate.windows });
+/* record Buffer's RateLimit headers; with the operation's hold id and the calls it really made, settle its reservation */
+async function noteRate(env, rate, hold, used) {
+  const windows = rate && rate.windows && Object.keys(rate.windows).length ? rate.windows : null;
+  if (!windows && !hold) return;
+  await ask(env, { op: 'record', windows: windows || {}, hold: hold || null, used });
 }
 
 /* ---------- request body ---------- */
@@ -155,7 +167,7 @@ async function pkcePair() {
   return { verifier, challenge };
 }
 async function oauthStart(request, env) {
-  if (await limited(env, 'RL_AUTH', clientIp(request), 10)) return html(errorPage('Slow down', 'Too many sign-in attempts from your network. Wait a minute and try again.'), 429);
+  if (await limited(env, 'RL_AUTH', await clientKey(request), 10)) return html(errorPage('Slow down', 'Too many sign-in attempts from your network. Wait a minute and try again.'), 429);
   if (!env.BUFFER_CLIENT_ID || !env.BUFFER_CLIENT_SECRET) return html(errorPage('Not configured', 'Last Look is not configured yet.'), 503);
   /* say "busy" now rather than after Buffer's consent screen; nothing is reserved here (the callback admits) */
   const peek = await ask(env, { op: 'peek' });
@@ -176,7 +188,7 @@ async function oauthStart(request, env) {
   return redirect(u.toString(), [setCookie(OAUTH_COOKIE, sealed, 600)]);
 }
 async function oauthCallback(request, env, url, ctx) {
-  if (await limited(env, 'RL_AUTH', clientIp(request), 10)) return html(errorPage('Slow down', 'Too many sign-in attempts from your network. Wait a minute and try again.'), 429);
+  if (await limited(env, 'RL_AUTH', await clientKey(request), 10)) return html(errorPage('Slow down', 'Too many sign-in attempts from your network. Wait a minute and try again.'), 429);
   const clear = [clearCookie(OAUTH_COOKIE)];
   const sealed = parseCookies(request)[OAUTH_COOKIE];
   const flow = sealed ? await openJSON(env, 'oauth', 'lastlook-oauth-v1', sealed) : null;
@@ -188,11 +200,19 @@ async function oauthCallback(request, env, url, ctx) {
   const [nonce, sig] = state.split('.');
   const expectSig = nonce ? (await hmac(env, 'oauth-state', nonce)).slice(0, 22) : '';
   if (!state || !safeEqual(state, flow.state) || !safeEqual(sig || '', expectSig)) return page('Sign-in refused', 'The sign-in response did not match this browser. Start again.', 403);
+  /* each sign-in attempt is single-use: the gate keeps a hash of its nonce at least as long as the cookie lives
+     (10 minutes) and refuses a second callback with it, before any token request */
+  const once = await ask(env, { op: 'nonce', h: (await sha256hex('lastlook-signin:' + nonce)).slice(0, 32) });
+  if (!once.ok) {
+    if (once.code === 'gate_down') return page('A short pause', 'Last Look is busy for a moment. ' + retryHint(60), 503, true);
+    return page('Sign-in already used', 'This sign-in response was already used. Start again.', 400);
+  }
   if (errorParam) return page(errorParam === 'access_denied' ? 'No problem' : 'Buffer said no', errorParam === 'access_denied' ? 'You cancelled the connection, so nothing was read.' : 'Buffer could not complete the connection. Start again.', 400);
   if (!/^[A-Za-z0-9._~-]{8,2048}$/.test(code)) return page('Sign-in failed', 'Buffer returned an unexpected code. Start again.', 400);
-  /* a sign-in spends one Buffer request: refuse early when the app allowance is nearly gone */
-  const adm = await ask(env, { op: 'admit', kind: 'signin', calls: 1 });
-  if (!adm.ok) return page('A short pause', (adm.message || 'Last Look is busy right now.') + ' ' + retryHint(adm.retryAfter), 429, true);
+  /* a sign-in spends one Buffer request: refuse early when the app allowance is nearly gone. This only looks:
+     nothing is reserved until Buffer has returned a real access token, so forged codes cost the allowance nothing */
+  const pk = await ask(env, { op: 'peek' });
+  if (!pk.ok) return page('A short pause', (pk.message || 'Last Look is busy right now.') + ' ' + retryHint(pk.retryAfter), 429, true);
   let tok;
   try {
     const ctl = new AbortController();
@@ -213,16 +233,19 @@ async function oauthCallback(request, env, url, ctx) {
   } catch (e) {
     return page('Sign-in failed', 'Could not reach Buffer to finish signing in. Try again.', 502);
   }
-  if (tok.access_token.length > 8192) return page('Sign-in failed', 'Buffer returned an unexpected token.', 400);
+  if (!tok.access_token || tok.access_token.length > 8192) return page('Sign-in failed', 'Buffer returned an unexpected token.', 400);
+  /* a real token: reserve the one request the account query spends, then make it */
+  const adm = await ask(env, { op: 'admit', kind: 'signin', calls: 1 });
+  if (!adm.ok) return page('A short pause', (adm.message || 'Last Look is busy right now.') + ' ' + retryHint(adm.retryAfter), 429, true);
   const scopes = String(tok.scope || '');
   let acct;
   try {
     const r = await gql(tok.access_token, Q_ACCOUNT);
-    await noteRate(env, r.rate);
+    await noteRate(env, r.rate, adm.hold, 1);
     acct = r.data && r.data.account;
     if (!acct || !acct.id || !Array.isArray(acct.organizations)) throw new Error('no account');
   } catch (e) {
-    if (e instanceof BufferError && e.rate) await noteRate(env, e.rate);
+    await noteRate(env, e instanceof BufferError ? e.rate : null, adm.hold, 1);   /* a hold is settled once; repeats are ignored */
     return page('Sign-in failed', 'Connected, but Buffer would not show the account. Try again.', 502);
   }
   const acctHash = await sha256hex('lastlook-account:' + String(acct.id));
@@ -293,8 +316,11 @@ async function scan(env, s) {
         if (r.rate && r.rate.low) { truncated = true; break outer; }
       }
     }
+  } catch (e) {
+    if (e instanceof BufferError && e.rate) rate = e.rate;
+    throw e;
   } finally {
-    await noteRate(env, rate);
+    await noteRate(env, rate, adm.hold, calls);
   }
   const ts = Date.now();
   const links = await tokensFor(env, s.sid, ts, posts);
@@ -318,8 +344,11 @@ async function lookback(env, s) {
       for (const c of (r.data.channels || []).slice(0, 100)) channels.push(Object.assign(shapeChannel(c), { org: org.name }));
       for (const e of ((r.data.posts || {}).edges || [])) if (e && e.node) posts.push(shapeSent(e.node));
     }
+  } catch (e) {
+    if (e instanceof BufferError && e.rate) rate = e.rate;
+    throw e;
   } finally {
-    await noteRate(env, rate);
+    await noteRate(env, rate, adm.hold, calls);
   }
   const at = (p) => Date.parse(p.sentAt || p.dueAt || '') || 0;
   posts = posts.filter((p) => p.status === 'sent').sort((a, b) => at(b) - at(a)).slice(0, LOOKBACK_N);
@@ -410,9 +439,10 @@ async function fix(env, s, body) {
   }
   const adm = await ask(env, { op: 'admit', kind: 'fix', acct: s.record.acct, sk: s.sk, calls: 2 });
   if (!adm.ok) return refusal(adm);
-  let rate = null;
+  let rate = null; let used = 0;
   try {
     /* re-read the post: it must still be what the user looked at, and still be safe to change */
+    used++;
     const cur = await gql(s.record.at, Q_POST, { id: postId });
     rate = cur.rate;
     const node = cur.data && cur.data.post;
@@ -441,6 +471,7 @@ async function fix(env, s, body) {
       if (post.status !== 'scheduled' || post.isCustomScheduled || post.shareMode === 'customScheduled') return fail(409, 'not_queue', 'Only posts in queue slots can be moved in the queue. This one has its own time.');
       m = M_MOVE; vars = { id: postId, position };
     }
+    used++;
     const r = await gql(s.record.at, m, vars);
     rate = r.rate;
     const payload = r.data && (r.data.editPost || r.data.movePostInQueue);
@@ -459,8 +490,11 @@ async function fix(env, s, body) {
     }
     console.log(JSON.stringify({ ev: 'fix', action, ok: true }));
     return json({ ok: true, action, post: updated, ts: nts, links: newLinks, undo });
+  } catch (e) {
+    if (e instanceof BufferError && e.rate) rate = e.rate;
+    throw e;
   } finally {
-    await noteRate(env, rate);
+    await noteRate(env, rate, adm.hold, used);
   }
 }
 
@@ -473,7 +507,7 @@ async function handle(request, env, ctx) {
 
   if (method === 'GET' || method === 'HEAD') {
     if (path === '/') {
-      if (await limited(env, 'RL_IP', clientIp(request), IP_LIMIT)) return html(errorPage('Slow down', 'Too many requests from your network. Wait a minute.'), 429);
+      if (await limited(env, 'RL_IP', await clientKey(request), IP_LIMIT)) return html(errorPage('Slow down', 'Too many requests from your network. Wait a minute.'), 429);
       const s = await readSession(env, request);
       if (s && s.record.acct) {
         const cur = await ask(env, { op: 'current', acct: s.record.acct, sk: s.sk });
@@ -494,7 +528,7 @@ async function handle(request, env, ctx) {
   if (method !== 'POST') return fail(405, 'method', 'Method not allowed.');
   if (!path.startsWith('/api/')) return fail(404, 'not_found', 'Not found.');
   /* per-IP limit first, before any session lookup */
-  if (await limited(env, 'RL_IP', clientIp(request), IP_LIMIT)) return fail(429, 'slow_down', 'Too many requests from your network. Wait a minute.', { 'retry-after': '60' });
+  if (await limited(env, 'RL_IP', await clientKey(request), IP_LIMIT)) return fail(429, 'slow_down', 'Too many requests from your network. Wait a minute.', { 'retry-after': '60' });
   const g = await guard(request, env);
   if (g.error) return g.error;
   const s = g.session;

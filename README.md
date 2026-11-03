@@ -38,12 +38,12 @@ Before any write, the server reads the post again and refuses if the text change
 
 ## How it uses the Buffer API
 
-- OAuth 2.0 Authorization Code with PKCE (S256), confidential client, scopes `account:read posts:read posts:write`.
+- OAuth 2.0 Authorization Code with PKCE (S256), confidential client, scopes `account:read posts:read posts:write`. Each sign-in attempt can be used once, and nothing of the shared allowance is reserved until Buffer has returned a real access token.
 - `account { organizations }` once at sign-in.
 - One GraphQL request per scan page: `channels` and `posts(filter: { status: [scheduled, needs_approval, draft] }, sort: dueAt asc)` together, 100 posts per page, at most 3 requests per scan.
 - Look back: one request per organization (first two organizations): `channels` and `posts(filter: { status: [sent] }, sort: dueAt desc, first: 90)` with `sentAt` and `externalLink`. A query only; one per account every two minutes, six a day.
 - Fixes: `post(input: { id })` to re-read, then `editPost(input: { id, text })`, `editPost(input: { id, text, saveToDraft: true })` or `movePostInQueue(input: { id, position })`. The mutation returns the whole post, so the page updates that post without a new scan.
-- A Durable Object (`src/gate.js`) guards the per-app allowance: it records the `RateLimit` headers of every Buffer response and refuses new scans and fixes when fewer than 20 requests (15-minute window) or 150 (24-hour window) remain; sign-ins keep a smaller reserve. Per account: one scan a minute, 20 scans, 40 fixes, 300 link checks, 6 look-backs (one per 2 minutes) and 20 sign-ins a day, one live session at a time. A sign-in (1 request), a full scan (1-3) and a look-back (1-2) together stay within the 10 requests per 15 minutes that each authorized user adds to the app's allowance.
+- A Durable Object (`src/gate.js`) guards the per-app allowance: it records the `RateLimit` headers of every Buffer response and refuses new scans and fixes when fewer than 20 requests (15-minute window) or 150 (24-hour window) remain; sign-ins keep a smaller reserve. Per account: one scan a minute, 20 scans, 40 fixes, 300 link checks, 6 look-backs (one per 2 minutes) and 20 sign-ins a day, one live session at a time, and one budget of real Buffer requests across all of them: 15 per 15 minutes and 60 a day. A typical visit (sign-in 1 request, a scan 1-3, a look-back 1-2) takes 3-6 requests, inside the 10 per 15 minutes that each authorized user adds to the app's allowance; a heavy account can spend more than it adds (15 against 10 per 15 minutes, 60 against 25 a day), and the app-wide margins are what keep that from reaching everyone else.
 
 ## When Buffer says "not now"
 
