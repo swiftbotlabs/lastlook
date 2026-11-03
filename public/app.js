@@ -381,6 +381,7 @@ function applyFixResult(res) {
   for (const l of res.links || []) if (!state.links.has(l.url)) state.linkQueue.push({ url: l.url, sig: l.sig, ts: res.ts });
   recompute();
   render();
+  if (!state.linkQueue.length) $('links-status').textContent = linkSummary();
   runLinks();
 }
 
@@ -407,6 +408,7 @@ async function doScan(quiet) {
     const now = Date.now();
     for (const [u, r] of state.links) if (now - r.at > LINK_TTL) state.links.delete(u);
     state.linkQueue = d.links.filter((l) => !state.links.has(l.url)).map((l) => ({ url: l.url, sig: l.sig, ts: d.ts }));
+    if (!state.linkQueue.length) $('links-status').textContent = linkSummary();
     render();
     runLinks();
   } catch (e) {
@@ -428,7 +430,8 @@ function scanButton() {
   if (left > 0) { b.disabled = true; b.textContent = 'Scan again in ' + left + ' s'; } else { b.disabled = false; b.textContent = T('Scan again', 'Reset sample'); }
 }
 async function runLinks() {
-  if (state.linkRunning) return;
+  /* nothing new to check (e.g. after a fix that added no link): keep the last summary line */
+  if (state.linkRunning || !state.linkQueue.length) return;
   state.linkRunning = true;
   const total = state.linkQueue.length;
   let done = 0;
@@ -461,14 +464,26 @@ async function runLinks() {
       done += batch.length;
       render();
     }
-    const broken = Array.from(state.links.values()).filter((r) => r.flag && r.flag.severity === 'high').length;
-    status.textContent = total ? plural(total, 'link') + ' checked' + (broken ? ', ' + broken + ' broken' : ', none broken') + T('', ' (sample results)') : '';
+    status.textContent = linkSummary();
   } finally {
     state.linkRunning = false;
     render();
   }
 }
 
+/* "5 links checked, 3 broken": over the links in the posts on screen now */
+function linkSummary() {
+  if (!state.data) return '';
+  const urls = new Set(state.data.posts.flatMap((p) => (p.links || []).map((l) => l.url)));
+  let checked = 0; let broken = 0;
+  for (const u of urls) {
+    const r = state.links.get(u);
+    if (!r) continue;
+    checked++;
+    if (r.flag && r.flag.severity === 'high') broken++;
+  }
+  return checked ? plural(checked, 'link') + ' checked' + (broken ? ', ' + broken + ' broken' : ', none broken') + T('', ' (sample results)') : '';
+}
 function unchecked(url, why) {
   return { check: 'links', id: 'links.unchecked', severity: 'low', title: 'Link not checked', detail: String(url).slice(0, 120) + ': ' + why + '.', fixes: [] };
 }
