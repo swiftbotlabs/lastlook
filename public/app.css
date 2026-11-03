@@ -180,6 +180,11 @@ textarea{width:100%;min-height:140px;resize:vertical;border:1px solid var(--line
 .diff del{background:var(--del-bg);color:var(--del);border-radius:3px}
 .dlg-error{color:var(--high);font-weight:600;font-size:14.5px}
 .dlg-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:6px}
+.undo-bar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:flex;align-items:center;gap:14px;background:var(--ink);color:var(--bg);padding:8px 8px 8px 16px;border-radius:12px;font-size:15px;max-width:calc(100vw - 32px);box-shadow:0 6px 24px rgba(0,0,0,.25);z-index:21}
+.undo-bar .btn{background:transparent;color:var(--bg);border-color:currentColor;font-variant-numeric:tabular-nums}
+.undo-bar .btn:hover{background:rgba(127,127,127,.25)}
+.undo-bar:not([hidden]) ~ .toast{bottom:78px}
+.undo-btn{font-variant-numeric:tabular-nums}
 .toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:15px;max-width:calc(100vw - 32px);box-shadow:0 6px 24px rgba(0,0,0,.25);z-index:20}
 
 @media (max-width:520px){

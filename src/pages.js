@@ -2,7 +2,7 @@
    the app page is a shell, and public/app.js builds the queue view with textContent. */
 
 export const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const V = '20261103g';
+const V = '20261103h';
 
 const LOGO = '<svg class="logo" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect x="1" y="1" width="30" height="30" rx="8" class="logo-bg"/><path d="M6 17.5c2.6-4.4 6-6.6 10-6.6s7.4 2.2 10 6.6c-2.6 4.4-6 6.6-10 6.6s-7.4-2.2-10-6.6z" class="logo-eye"/><circle cx="16" cy="17.5" r="3.4" class="logo-pupil"/><path d="M9 8.2h14" class="logo-line"/></svg>';
 
@@ -143,6 +143,7 @@ function appBody(o) {
     </div>
   </form>
 </dialog>
+<div class="undo-bar" id="undo-bar" role="status" aria-live="polite" hidden><span id="undo-msg"></span><button type="button" class="btn btn-small" id="undo-btn">Undo</button></div>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>`;
 }
 
@@ -167,7 +168,7 @@ export function privacyPage() {
   <ul>
     <li><strong>account:read</strong>: your account id and display name, and your organizations and channels (name, network, time zone, avatar), so posts can be judged per channel.</li>
     <li><strong>posts:read</strong>: your scheduled posts, posts awaiting approval and drafts: text, scheduled time, attached media type and alt text, link previews and first comments. When you open <strong>Look back</strong>, also your most recent sent posts (up to 90): the same fields plus when each went out and the link to it on the network.</li>
-    <li><strong>posts:write</strong>: used only when you press a fix button and then confirm. It edits that one post’s text, moves it to drafts, or moves it to the front or end of its queue. Last Look never creates, publishes or deletes posts.</li>
+    <li><strong>posts:write</strong>: used only when you press a fix button and then confirm, or press Undo within two minutes of an edit. It edits that one post’s text, moves it to drafts, or moves it to the front or end of its queue. Last Look never creates, publishes or deletes posts.</li>
   </ul>
 
   <h2>Where the checks run</h2>
@@ -226,7 +227,7 @@ export function aboutPage() {
     <li><strong>Leftovers.</strong> Template placeholders ([link], {{first_name}}, TODO), images without alt text, hashtags cut short by a hyphen or apostrophe, a space after @ or #, unmatched brackets, too many hashtags, and posts landing between 1 and 5 a.m.</li>
   </ul>
   <h2>4. Fix</h2>
-  <p>Each flag offers the fixes that make sense for it: edit the text (with a suggested version where one can be made, a live character count and a word-by-word view of the change), move the post to drafts, or move a queue post to the top or bottom of its queue. Nothing is saved until you confirm. Before saving, Last Look reads the post again and stops if it changed in Buffer since your scan, or if it goes out in the next three minutes. Threads are left to Buffer’s editor so every part stays in step. After a fix, that one post is updated on the page from Buffer’s answer and checked again; nothing else is re-read. Last Look never deletes a post.</p>
+  <p>Each flag offers the fixes that make sense for it: edit the text (with a suggested version where one can be made, a live character count and a word-by-word view of the change), move the post to drafts, or move a queue post to the top or bottom of its queue. Nothing is saved until you confirm. Before saving, Last Look reads the post again and stops if it changed in Buffer since your scan, or if it goes out in the next three minutes. Threads are left to Buffer’s editor so every part stays in step. After a fix, that one post is updated on the page from Buffer’s answer and checked again; nothing else is re-read. After an edit, <strong>Undo</strong> stays available for two minutes: it reads the post again and puts the previous text back only if the post still holds exactly what Last Look wrote. Last Look never deletes a post.</p>
   <h2>5. Look back</h2>
   <p>After you connect, the Look back tab reads your most recent sent posts (up to 90, one request per organization) and runs the text checks on them, each judged at the moment it actually went out in its channel’s time zone: formatting that showed as raw text, posts longer than the network allows, leftover placeholders, the same post sent twice, day and time words that were wrong when it went out, and images sent without alt text. The result reads “Last Look would have caught N issues in your last M sent posts”, grouped by check, each linking to the post. It only reads: sent posts cannot be changed, and their links are not opened.</p>
   <h2>Limits</h2>

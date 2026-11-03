@@ -32,6 +32,7 @@ After you connect, the Look back tab reads your most recent sent posts (up to 90
 - **Edit text**: a suggested version where one can be made (cleaned formatting, the right weekday, the right greeting, a fixed hashtag), or your own edit, with a live character count for the channel and a word-by-word diff. Only the text changes; the schedule stays.
 - **Move to drafts**: takes the post out of the schedule without losing it.
 - **Move in queue**: sends a queue-slot post to the front or the end of its channel's queue.
+- **Undo** (two minutes after an edit): puts the previous text back. The edit's answer carries an undo token, an HMAC over the session, post id, time, the hash of the text Buffer now holds and the hash of the text the server re-read before editing. Undo re-reads the post and restores only if the post still holds exactly what Last Look wrote, and only to that previous text.
 
 Before any write, the server reads the post again and refuses if the text changed since the scan, if it goes out in the next three minutes, if it is a thread (edited in Buffer so all parts stay in step) or if Buffer does not allow the action for that account. Last Look never creates, publishes or deletes a post.
 

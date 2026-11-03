@@ -19,7 +19,8 @@ const LINK_TTL = 10 * 60 * 1000;
 
 const SCAN_GAP_MS = 60000;
 const state = { raw: null, data: null, filter: 'flagged', notes: false, links: new Map(), linkQueue: [], linkRunning: false, busy: false, dialog: null, nextScanAt: 0,
-  scanError: null, ended: false, view: 'queue', back: null, backBusy: false, backError: null };
+  scanError: null, ended: false, view: 'queue', back: null, backBusy: false, backError: null,
+  undos: new Map(), undoBar: null };
 
 /* run the checks on the current raw scan (after a scan, and after each fix) */
 function recompute() {
@@ -309,6 +310,8 @@ function renderPost(p, ch) {
   /* general actions for posts with something to fix */
   const actions = [];
   const needed = new Set(all.flatMap((f) => (f.fixes || []).map((x) => x.type + (x.position ? ':' + x.position : ''))));
+  const u = state.undos.get(p.id);
+  if (u && Date.now() < u.until) actions.push(el('button', { type: 'button', class: 'btn btn-small undo-btn', 'data-undo': p.id, onclick: () => doUndo(p.id) }, undoLabel(u)));
   if (flags.length || state.filter === 'all') {
     if (p.allowed && p.allowed.edit) actions.push(el('button', { type: 'button', class: 'btn btn-small', onclick: () => openEdit(p, ch, null, null) }, 'Edit text'));
     if (p.allowed && p.allowed.draft && (needed.has('draft') || state.filter === 'all' || flags.some((f) => f.severity === 'high'))) actions.push(el('button', { type: 'button', class: 'btn btn-small btn-quiet', onclick: () => openSimple(p, ch, 'draft') }, 'Move to drafts'));
@@ -530,19 +533,72 @@ async function confirmDialog() {
   try {
     const raw = state.raw && state.raw.posts.find((x) => x.id === cfg.post.id);
     if (!raw) throw new Error('Scan again before changing this post.');
-    const body = { postId: raw.id, action: cfg.action, confirm: true, expectedHash: await sha256hex(raw.text || ''), ts: raw.pts, ptok: raw.ptok };
+    const before = raw.text || '';
+    const body = { postId: raw.id, action: cfg.action, confirm: true, expectedHash: await sha256hex(before), ts: raw.pts, ptok: raw.ptok };
     if (cfg.action === 'edit') body.text = $('dlg-text').value;
     if (cfg.action === 'move') body.position = cfg.position;
     const res = await backend.fix(body);
     closeDialog();
+    if (cfg.action === 'edit' && res.undo && res.post) {
+      state.undos.set(res.post.id, { oldText: before, newHash: await sha256hex(res.post.text || ''), uts: res.undo.uts, token: res.undo.token, until: Date.now() + Math.max(0, Math.min(res.undo.until - res.undo.uts, 120000)), busy: false });
+      state.undoBar = res.post.id;
+    }
     applyFixResult(res);
-    toast((cfg.action === 'edit' ? T('Saved to Buffer.', 'Saved.') : cfg.action === 'draft' ? 'Moved to drafts.' : 'Moved in the queue.') + T('', ' Sample only: nothing was sent to Buffer.'));
+    if (cfg.action === 'edit' && res.undo) showUndoBar(); else toast((cfg.action === 'edit' ? T('Saved to Buffer.', 'Saved.') : cfg.action === 'draft' ? 'Moved to drafts.' : 'Moved in the queue.') + T('', ' Sample only: nothing was sent to Buffer.'));
   } catch (e) {
     if (e.status === 401) { closeDialog(); return sessionEnded(); }
-    $('dlg-error').textContent = e.message;
+    $('dlg-error').textContent = isCalm(e) ? calmText(e) : e.message;
     $('dlg-error').hidden = false;
     btn.textContent = old;
     btn.disabled = false;
+  }
+}
+
+/* ---------- Undo: for two minutes after an edit, back to the text the post had before ---------- */
+function undoLabel(u) {
+  if (u.busy) return 'Undoing…';
+  const left = Math.max(0, Math.ceil((u.until - Date.now()) / 1000));
+  return 'Undo edit · ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+}
+function showUndoBar() {
+  const id = state.undoBar;
+  const u = id && state.undos.get(id);
+  const bar = $('undo-bar');
+  if (!u || Date.now() >= u.until) { bar.hidden = true; state.undoBar = null; return; }
+  $('undo-msg').textContent = T('Saved to Buffer.', 'Saved to the sample.');
+  $('undo-btn').textContent = undoLabel(u).replace('Undo edit', 'Undo');
+  $('undo-btn').disabled = !!u.busy;
+  bar.hidden = false;
+}
+function undoTick() {
+  let expired = false;
+  for (const [id, u] of state.undos) if (Date.now() >= u.until && !u.busy) { state.undos.delete(id); expired = true; }
+  for (const b of document.querySelectorAll('button[data-undo]')) { const u = state.undos.get(b.getAttribute('data-undo')); if (u) b.textContent = undoLabel(u); }
+  showUndoBar();
+  if (expired && state.view === 'queue') render();
+}
+async function doUndo(postId) {
+  const u = state.undos.get(postId);
+  if (!u || u.busy) return;
+  if (Date.now() >= u.until) { undoTick(); return; }
+  const raw = state.raw && state.raw.posts.find((x) => x.id === postId);
+  if (!raw) return;
+  u.busy = true; undoTick();
+  try {
+    const res = await backend.fix({ postId, action: 'undo', confirm: true, expectedHash: u.newHash, text: u.oldText, uts: u.uts, undo: u.token, ts: raw.pts, ptok: raw.ptok });
+    state.undos.delete(postId);
+    if (state.undoBar === postId) state.undoBar = null;
+    showUndoBar();
+    applyFixResult(res);
+    toast(T('Restored the previous text in Buffer.', 'Restored the previous text. Sample only: nothing was sent to Buffer.'));
+  } catch (e) {
+    u.busy = false;
+    if (e.status === 401) return sessionEnded();
+    /* changed in Buffer since, expired or refused: Undo is off for this post */
+    if (e.status === 409 || e.status === 410 || e.status === 403) { state.undos.delete(postId); if (state.undoBar === postId) state.undoBar = null; }
+    showUndoBar();
+    if (state.view === 'queue') render();
+    toast(isCalm(e) ? calmText(e) : e.message, 7000);
   }
 }
 
@@ -702,7 +758,7 @@ async function init() {
   $('dlg').addEventListener('close', () => { state.dialog = null; });
   $('dlg-form').addEventListener('submit', (e) => e.preventDefault());
   if (MODE === 'live') {
-    $('disconnect').addEventListener('click', async () => {
+    $('disconnect') && $('disconnect').addEventListener('click', async () => {
       const b = $('disconnect');
       b.disabled = true; b.textContent = 'Disconnecting…';
       try { await api('/api/disconnect', {}); } catch (e) { /* the session may already be gone */ }
@@ -712,6 +768,8 @@ async function init() {
     setInterval(sessionClock, 30000);
   }
   setInterval(scanButton, 1000);
+  setInterval(undoTick, 1000);
+  $('undo-btn').addEventListener('click', () => { if (state.undoBar) doUndo(state.undoBar); });
   if (location.hash === '#lookback') setView('back');
   doScan(false);
 }

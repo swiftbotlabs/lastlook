@@ -10,6 +10,7 @@ export const SAMPLE_BRAND = 'Little Kiln Studio';
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MAX_TEXT = 30000;
 const LIVE = new Set(['scheduled', 'needs_approval']);
+const UNDO_MS = 2 * 60 * 1000;
 
 /* the wall-clock time hh:mm on local day number n in the sample zone, as an ISO instant */
 export function zoned(n, hh, mm, tz) {
@@ -135,7 +136,7 @@ function refuse(status, code, message) { const e = new Error(message); e.status 
    Changes live only in this object (and so only in this browser tab). */
 export class SampleBackend {
   constructor(now) { this.now = now || (() => new Date()); this.reset(); }
-  reset() { this.posts = sampleQueue(this.now()); this.version = 0; }
+  reset() { this.posts = sampleQueue(this.now()); this.version = 0; this.undos = new Map(); }
   links() {
     const seen = new Set(); const out = [];
     for (const u of Object.keys(SAMPLE_LINKS)) if (!seen.has(u)) { seen.add(u); out.push({ url: u, sig: 'sample' }); }
@@ -171,6 +172,14 @@ export class SampleBackend {
     if (await sha256hex(post.text) !== b.expectedHash) throw refuse(409, 'changed', 'This post changed after your scan. Reset the sample.');
     const acts = new Set(post.allowedActions);
     const shifted = [];
+    const prev = post.text;
+    if (b.action === 'undo') {
+      /* like the server: only the last edit's own undo, within two minutes, back to exactly the previous text */
+      const u = this.undos.get(post.id);
+      if (!u || u.token !== b.undo || u.uts !== b.uts) throw refuse(403, 'bad_undo', 'This undo does not match your last edit of this post.');
+      if (this.now().getTime() - u.uts > UNDO_MS + 15000) throw refuse(410, 'undo_expired', 'Undo is only available for two minutes after an edit. Edit the post again instead.');
+      if (b.text !== u.prev) throw refuse(403, 'bad_undo', 'This undo does not match your last edit of this post.');
+    }
     if (b.action === 'edit' || b.action === 'undo') {
       const text = typeof b.text === 'string' ? b.text.replace(/\r\n?/g, '\n') : '';
       if (!text.trim()) throw refuse(400, 'bad_input', 'The new text is empty. To pull the post, move it to drafts instead.');
@@ -178,7 +187,7 @@ export class SampleBackend {
       if (!(LIVE.has(post.status) || post.status === 'draft')) throw refuse(409, 'not_editable', 'Only queued posts and drafts can be edited here.');
       if (!acts.has('updatePost')) throw refuse(403, 'not_allowed', 'This post cannot be edited.');
       if (text === post.text) throw refuse(400, 'no_change', 'The text is unchanged.');
-      post.text = text;
+      post.text = b.action === 'undo' ? b.text : text;
     } else if (b.action === 'draft') {
       if (!LIVE.has(post.status)) throw refuse(409, 'not_queued', 'Only queued posts can be moved to drafts.');
       post.status = 'draft';
@@ -198,6 +207,11 @@ export class SampleBackend {
     const ts = this.now().getTime();
     const out = (p) => Object.assign(clone(p), { ptok: 'sample' });
     const links = Object.keys(SAMPLE_LINKS).filter((u) => post.text.includes(u)).map((u) => ({ url: u, sig: 'sample' }));
-    return { ok: true, action: b.action, post: out(post), shifted: shifted.map(out), ts, links };
+    let undo = null;
+    if (b.action === 'edit') {
+      undo = { uts: ts, until: ts + UNDO_MS, token: 'sample-undo-' + this.version };
+      this.undos.set(post.id, { token: undo.token, uts: ts, prev });
+    } else if (b.action === 'undo') this.undos.delete(post.id);
+    return { ok: true, action: b.action, post: out(post), shifted: shifted.map(out), ts, links, undo };
   }
 }

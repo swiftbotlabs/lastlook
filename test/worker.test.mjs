@@ -407,3 +407,82 @@ test('disconnect answers at once even when the store delete is slow; the session
   await Promise.all(pending);
   assert.equal(env.SESSIONS._m.size, 0);
 });
+
+/* ---------- undo ---------- */
+/* a tiny Buffer: the re-read returns the current text, editPost changes it */
+async function undoSetup() {
+  const env = makeEnv();
+  const s = await signIn(env);
+  const node = POST_NODE({ text: 'Happy Friday **all**' });
+  const j = await scanned(env, s, node);
+  const p = j.posts[0];
+  const buf = { text: node.text };
+  mockFetch((u, body) => {
+    const q = JSON.parse(body);
+    if (/query One/.test(q.query)) return jsonRes({ data: { post: Object.assign({}, node, { text: buf.text }) } }, 200, RATE(90, 450));
+    buf.text = q.variables.text;
+    return jsonRes({ data: { editPost: { __typename: 'PostActionSuccess', post: Object.assign({}, node, { text: buf.text }) } } }, 200, RATE(89, 449));
+  });
+  const r = await worker.fetch(post('/api/fix', s, { postId: p.id, ts: j.ts, ptok: p.ptok, expectedHash: await sha256hex(node.text), confirm: true, action: 'edit', text: 'Happy Monday all' }), env);
+  assert.equal(r.status, 200);
+  const e = await r.json();
+  const undo = { postId: p.id, ts: e.ts, ptok: e.post.ptok, action: 'undo', confirm: true, expectedHash: await sha256hex(e.post.text), text: node.text, uts: e.undo.uts, undo: e.undo.token };
+  calls = [];
+  return { env, s, node, buf, edit: e, undo };
+}
+
+test('undo: an edit offers Undo for two minutes; Undo re-reads and restores exactly the previous text', async () => {
+  const { env, s, buf, edit, undo } = await undoSetup();
+  assert.equal(edit.undo.until - edit.undo.uts, 120000);
+  assert.match(edit.undo.token, /^[A-Za-z0-9_-]{32}$/);
+  assert.equal(buf.text, 'Happy Monday all');
+  const r = await worker.fetch(post('/api/fix', s, undo), env);
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(buf.text, 'Happy Friday **all**');
+  assert.equal(j.post.text, 'Happy Friday **all**');
+  assert.equal(j.undo, null, 'no undo of an undo');
+  const q = calls.map((c) => JSON.parse(c.body));
+  assert.match(q[0].query, /query One/, 'the post is re-read first');
+  assert.match(q[1].query, /editPost\(input: \{ id: \$id, text: \$text \}\)/);
+  assert.deepEqual(q[1].variables, { id: undo.postId, text: 'Happy Friday **all**' });
+  assert.ok(!/shareNow|shareNext|addToQueue|deletePost|publish/.test(q[1].query));
+});
+
+test('undo is refused when the post changed in Buffer after our edit (re-read, no write)', async () => {
+  const { env, s, buf, undo } = await undoSetup();
+  buf.text = 'Someone edited this in Buffer';
+  const r = await worker.fetch(post('/api/fix', s, undo), env);
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).message, /changed in Buffer after your edit/);
+  assert.equal(mutations().length, 0);
+  assert.equal(buf.text, 'Someone edited this in Buffer');
+});
+
+test('undo cannot write arbitrary text, run late, or cross sessions; refused before any Buffer call', async () => {
+  const { env, s, undo } = await undoSetup();
+  const cases = [
+    [Object.assign({}, undo, { text: 'Anything I like' }), 403],
+    [Object.assign({}, undo, { undo: 'A'.repeat(32) }), 403],
+    [Object.assign({}, undo, { expectedHash: 'f'.repeat(64) }), 403],
+    [Object.assign({}, undo, { uts: undo.uts - 3 * 60000 }), 410],
+    [Object.assign({}, undo, { confirm: false }), 400],
+    [Object.assign({}, undo, { postId: 'otherpost99' }), 403]
+  ];
+  for (const [b, code] of cases) assert.equal((await worker.fetch(post('/api/fix', s, b), env)).status, code);
+  /* the same request from a new session of the same account: the old session is gone (401); another account's session: token does not match */
+  const other = await signIn(env, 'acct-other');
+  assert.equal((await worker.fetch(post('/api/fix', other, undo), env)).status, 403);
+  assert.equal((await worker.fetch(post('/api/fix', s, undo, { origin: 'https://evil.example' }), env)).status, 403);
+  assert.equal(bufferCalls().length, 0);
+});
+
+test('undo counts as a fix in the gate (per-minute and daily budgets)', async () => {
+  const { env, s, undo } = await undoSetup();
+  const core = env.GATE.obj.core;
+  const a = await core.account(s.acct); a.fixes = 40; await core.saveAccount(s.acct, a);
+  const r = await worker.fetch(post('/api/fix', s, undo), env);
+  assert.equal(r.status, 429);
+  assert.equal((await r.json()).error, 'fix_budget');
+  assert.equal(bufferCalls().length, 0);
+});

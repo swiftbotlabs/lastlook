@@ -6,7 +6,7 @@
      POST /api/scan          read the queue through the user's token (the checks run in the browser)
      POST /api/links         check up to 6 links found by a scan (server-signed, 10-minute expiry)
      POST /api/lookback      read-only: the account's most recent sent posts (up to 90) for the Look back checks
-     POST /api/fix           edit text / move to drafts / move in queue, one post the scan returned, after confirm
+     POST /api/fix           edit text / move to drafts / move in queue / undo an edit, one post the scan returned, after confirm
      POST /api/disconnect    delete the session and its token
      GET  /try               the same app on a made-up sample queue (no session, no server or Buffer calls)
      GET  /privacy, /about, /healthz
@@ -38,6 +38,8 @@ const LINK_BATCH = 6;
 const LINK_SUBREQUESTS = 40;
 const LINK_TOKEN_MS = 10 * 60 * 1000;
 const POST_TOKEN_MS = 60 * 60 * 1000;
+const UNDO_MS = 2 * 60 * 1000;     /* Undo is offered for two minutes after an edit */
+const UNDO_GRACE_MS = 15 * 1000;   /* network slack for a click in the last seconds */
 const LOOKBACK_N = 90;             /* sent posts per Look back */
 const MAX_LOOKBACK_CALLS = 2;      /* Buffer requests per Look back: one per organization, first two organizations */
 const IP_LIMIT = 120;              /* pages and API calls per IP per minute, checked before any session lookup */
@@ -245,6 +247,9 @@ async function oauthCallback(request, env, url, ctx) {
 async function postToken(env, sid, ts, id, sign) { return (sign || await signer(env, 'post:' + sid))(ts + '\n' + id); }
 /* link token: lets /api/links check only links from this session's scan, for 10 minutes */
 async function linkToken(env, sid, ts, url, sign) { return (sign || await signer(env, 'link:' + sid))(ts + '\n' + url); }
+/* undo token: minted only after an edit succeeds; binds the session, the post, the time, the text Buffer now holds
+   (what we wrote) and the text it held before (re-read by the server), so Undo can restore exactly that and nothing else */
+async function undoToken(env, sid, uts, id, wroteHash, prevHash) { return (await signer(env, 'undo:' + sid))(uts + '\n' + id + '\n' + wroteHash + '\n' + prevHash); }
 
 async function tokensFor(env, sid, ts, posts) {
   const signPost = await signer(env, 'post:' + sid);
@@ -368,7 +373,7 @@ async function fix(env, s, body) {
   const postId = typeof body.postId === 'string' ? body.postId : '';
   const action = body.action;
   if (!ID_RE.test(postId)) return fail(400, 'bad_input', 'Unknown post.');
-  if (!['edit', 'draft', 'move'].includes(action)) return fail(400, 'bad_input', 'Unknown fix.');
+  if (!['edit', 'draft', 'move', 'undo'].includes(action)) return fail(400, 'bad_input', 'Unknown fix.');
   if (body.confirm !== true) return fail(400, 'not_confirmed', 'Confirm the change first.');
   if (s.record.canWrite === false) return fail(403, 'no_write', 'This connection can only read. Reconnect and allow editing posts.');
   const expected = typeof body.expectedHash === 'string' ? body.expectedHash : '';
@@ -387,6 +392,14 @@ async function fix(env, s, body) {
     if (t.length > MAX_TEXT) return fail(400, 'bad_input', 'The new text is too long.');
     if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(t)) return fail(400, 'bad_input', 'The new text contains control characters.');
   }
+  if (action === 'undo') {
+    /* the previous text comes back from the page, but it must be exactly the text the server re-read before the edit */
+    if (typeof body.text !== 'string' || body.text.length > MAX_TEXT) return fail(400, 'bad_input', 'Missing previous text.');
+    const uts = Number(body.uts);
+    const tok = typeof body.undo === 'string' ? body.undo : '';
+    if (!Number.isFinite(uts) || uts > now + 60000 || now - uts > UNDO_MS + UNDO_GRACE_MS) return fail(410, 'undo_expired', 'Undo is only available for two minutes after an edit. Edit the post again instead.');
+    if (!safeEqual(tok, await undoToken(env, s.sid, uts, postId, expected, await sha256hex(body.text)))) return fail(403, 'bad_undo', 'This undo does not match your last edit of this post.');
+  }
   let position = null;
   if (action === 'move') {
     position = body.position === 'top' ? 'top' : body.position === 'bottom' ? 'bottom' : null;
@@ -402,16 +415,19 @@ async function fix(env, s, body) {
     const node = cur.data && cur.data.post;
     if (!node) return fail(404, 'not_found', 'That post is gone. Scan again.');
     const post = shapePost(node);
-    if (await sha256hex(post.text) !== expected) return fail(409, 'changed', 'This post changed in Buffer after your scan. Scan again before fixing it.');
+    if (await sha256hex(post.text) !== expected) {
+      if (action === 'undo') return fail(409, 'changed', 'This post changed in Buffer after your edit, so Undo is off. Change it in Buffer directly.');
+      return fail(409, 'changed', 'This post changed in Buffer after your scan. Scan again before fixing it.');
+    }
     const acts = new Set(post.allowedActions);
     const due = post.dueAt ? Date.parse(post.dueAt) : null;
     if (due && LIVE.has(post.status) && due - Date.now() < 3 * 60 * 1000) return fail(409, 'too_close', 'This post goes out in under 3 minutes. Change it in Buffer directly.');
     let m; let vars;
-    if (action === 'edit') {
+    if (action === 'edit' || action === 'undo') {
       if (!(LIVE.has(post.status) || post.status === 'draft')) return fail(409, 'not_editable', 'Only queued posts and drafts can be edited here.');
       if (acts.size && !acts.has('updatePost')) return fail(403, 'not_allowed', 'Buffer does not let this account edit that post.');
       if (post.thread.length > 1) return fail(409, 'thread', 'Threads are edited in Buffer, so every part stays in step.');
-      const text = body.text.replace(/\r\n?/g, '\n');
+      const text = action === 'undo' ? body.text : body.text.replace(/\r\n?/g, '\n');
       if (text === post.text) return fail(400, 'no_change', 'The text is unchanged.');
       m = M_EDIT_TEXT; vars = { id: postId, text };
     } else if (action === 'draft') {
@@ -432,8 +448,14 @@ async function fix(env, s, body) {
     let newLinks = [];
     let nts = null;
     if (updated) { nts = Date.now(); newLinks = await tokensFor(env, s.sid, nts, [updated]); }
+    /* after an edit, offer Undo: back to the text the server re-read (post.text), while Buffer still holds ours */
+    let undo = null;
+    if (action === 'edit' && updated) {
+      const uts = Date.now();
+      undo = { uts, until: uts + UNDO_MS, token: await undoToken(env, s.sid, uts, postId, await sha256hex(updated.text), expected) };
+    }
     console.log(JSON.stringify({ ev: 'fix', action, ok: true }));
-    return json({ ok: true, action, post: updated, ts: nts, links: newLinks });
+    return json({ ok: true, action, post: updated, ts: nts, links: newLinks, undo });
   } finally {
     await noteRate(env, rate);
   }

@@ -137,3 +137,21 @@ test('/try page: served without a session, no CSRF token, clear banner, same CSP
   const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(app, /href: '\/try' \}, 'See a sample queue'/);
 });
+
+test('sample backend: Undo restores the previous text once, only with its own token, within two minutes', async () => {
+  let t = new Date('2026-11-03T05:00:00Z').getTime();
+  const be = new SampleBackend(() => new Date(t));
+  const d = await be.scan();
+  const p = d.posts.find((x) => x.id === 's-sale');
+  const r = await be.fix({ postId: p.id, action: 'edit', confirm: true, expectedHash: await sha(p.text), text: 'Happy Monday!' });
+  assert.equal(r.undo.until - r.undo.uts, 120000);
+  const u = { postId: p.id, action: 'undo', confirm: true, expectedHash: await sha('Happy Monday!'), text: p.text, uts: r.undo.uts, undo: r.undo.token };
+  await assert.rejects(be.fix(Object.assign({}, u, { text: 'something else' })), (e) => e.code === 'bad_undo');
+  await assert.rejects(be.fix(Object.assign({}, u, { undo: 'forged' })), (e) => e.code === 'bad_undo');
+  t += 3 * 60000;
+  await assert.rejects(be.fix(u), (e) => e.code === 'undo_expired');
+  t -= 2 * 60000;
+  const back = await be.fix(u);
+  assert.equal(back.post.text, p.text);
+  await assert.rejects(be.fix(u), (e) => e.status === 409 || e.code === 'bad_undo');
+});

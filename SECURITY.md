@@ -28,6 +28,7 @@ What the app protects: each user's Buffer access token and their queued posts, a
 
 ## Writes to Buffer
 - Only `editPost` (text, or text + saveToDraft) and `movePostInQueue` exist in the code. No create, publish, share-now or delete path.
+- Undo is an `editPost` back to the previous text and passes every write guard below. It also needs the undo token from the edit's answer: an HMAC (key derived per session) over edit time, post id, SHA-256 of the text Buffer returned after our edit and SHA-256 of the text the server re-read before it. So Undo can only restore that exact previous text, only on that post, only from that session, only within 2 minutes (+15 s slack), and only while Buffer still holds our text (re-read before writing; anything else is 409). A wrong token, text or time is refused before any Buffer request.
 - Each write needs `confirm: true`, the post token, and the SHA-256 of the text the user saw; the server re-reads the post and refuses on any mismatch, on a send time under 3 minutes away, on threads, on statuses other than scheduled/awaiting approval/draft, and when Buffer's `allowedActions` do not include the action.
 
 ## The /try sample page
