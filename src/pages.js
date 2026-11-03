@@ -240,11 +240,20 @@ export function aboutPage() {
 </main>`, {});
 }
 
-export function errorPage(title, message, withRetry) {
+export function errorPage(title, message, withRetry, opts) {
+  const o = opts || {};
   return shell(title + ' · Last Look', `
 <main id="main" class="prose narrow">
   <h1>${esc(title)}</h1>
   <p class="lead">${esc(message)}</p>
-  <p>${withRetry ? '<a class="btn btn-primary" href="/oauth/start">Start again</a> ' : ''}<a class="btn btn-quiet" href="/">Back to Last Look</a></p>
+  ${o.calm ? '<p class="muted">Nothing was read or changed. Meanwhile, the sample queue shows everything Last Look checks, without signing in.</p>' : ''}
+  <p class="cta-row">${o.calm ? '<a class="btn btn-primary" href="/try">Try the sample queue</a>' : withRetry ? '<a class="btn btn-primary" href="/oauth/start">Start again</a>' : ''}<a class="btn btn-quiet" href="/">Back to Last Look</a></p>
 </main>`, {});
+}
+/* "in about 7 minutes" for a Retry-After in seconds (the server does not know the visitor's clock or zone) */
+export function retryHint(sec) {
+  const s = Math.max(1, Math.ceil(Number(sec) || 60));
+  if (s <= 90) return 'Try again in about a minute.';
+  if (s < 5400) return 'Try again in about ' + Math.round(s / 60) + ' minutes.';
+  return 'Try again in about ' + Math.round(s / 3600) + ' hours.';
 }

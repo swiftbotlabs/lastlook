@@ -97,6 +97,17 @@ export class GateCore {
     for (const w of [W15, W24]) if (this.remaining(w) !== null) this.rate[w].r -= calls;
     return { ok: true };
   }
+  /* would a sign-in be admitted now? (no reservation, no account state: lets /oauth/start say "busy" before the
+     user goes through Buffer's consent screen for nothing) */
+  async peekSignin() {
+    const now = this.now();
+    await this.loadRate();
+    const [m15, m24] = LIMITS.margin.signin;
+    const r15 = this.remaining(W15); const r24 = this.remaining(W24);
+    if (r15 !== null && r15 - 1 < m15) return this.refuse('app_busy', 'Last Look is busy right now: Buffer’s shared request allowance for this app is nearly used.', (this.rate[W15].resetAt - now) / 1000);
+    if (r24 !== null && r24 - 1 < m24) return this.refuse('app_busy_day', 'Last Look has used most of today’s shared Buffer allowance.', Math.min(this.rate[W24].resetAt - now, 3600000) / 1000);
+    return { ok: true };
+  }
   /* Buffer's RateLimit headers, parsed: {windows: {name: {r, t, q, w}}} */
   async record(windows) {
     await this.loadRate();
@@ -156,6 +167,7 @@ export class GateCore {
       case 'current': return this.current(msg.acct, msg.sk);
       case 'admit': return this.admit(msg.kind, msg.acct, msg.sk, Math.max(1, Math.min(10, Number(msg.calls) || 1)));
       case 'record': return this.record(msg.windows);
+      case 'peek': return this.peekSignin();
       case 'bind': return this.bind(msg.acct, msg.sk);
       case 'unbind': return this.unbind(msg.acct, msg.sk);
       case 'links': return this.admitLinks(msg.acct, msg.sk, Array.isArray(msg.items) ? msg.items.slice(0, 10) : []);

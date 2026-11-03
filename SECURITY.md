@@ -6,7 +6,7 @@ What the app protects: each user's Buffer access token and their queued posts, a
 - Authorization Code + PKCE (S256), confidential client: the client secret exists only as a Worker secret and is sent only to `auth.buffer.com/token`.
 - `state` = random nonce + HMAC tag. It and the PKCE verifier travel in a 10-minute AES-GCM sealed, HttpOnly, Secure, SameSite=Lax `__Host-` cookie. The callback refuses a missing or expired cookie, a state that does not match it, and a wrong HMAC tag, before any token request.
 - Redirect URI is a constant; there is no user-controlled redirect anywhere.
-- A sign-in spends one Buffer request, so it asks the gate first (smaller reserve than scans) and counts toward a per-account daily limit (20).
+- A sign-in spends one Buffer request, so it asks the gate first (smaller reserve than scans) and counts toward a per-account daily limit (20). `/oauth/start` already peeks at the allowance (nothing reserved) and shows a calm "short pause" page with a retry estimate instead of sending the visitor through Buffer's consent screen for nothing.
 
 ## Sessions and tokens
 - Session id: 32 random bytes in a `__Host-` cookie (HttpOnly, Secure, SameSite=Lax, at most 1 hour).

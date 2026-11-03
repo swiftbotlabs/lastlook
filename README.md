@@ -45,6 +45,10 @@ Before any write, the server reads the post again and refuses if the text change
 - Fixes: `post(input: { id })` to re-read, then `editPost(input: { id, text })`, `editPost(input: { id, text, saveToDraft: true })` or `movePostInQueue(input: { id, position })`. The mutation returns the whole post, so the page updates that post without a new scan.
 - A Durable Object (`src/gate.js`) guards the per-app allowance: it records the `RateLimit` headers of every Buffer response and refuses new scans and fixes when fewer than 20 requests (15-minute window) or 150 (24-hour window) remain; sign-ins keep a smaller reserve. Per account: one scan a minute, 20 scans, 40 fixes, 300 link checks, 6 look-backs (one per 2 minutes) and 20 sign-ins a day, one live session at a time. A sign-in (1 request), a full scan (1-3) and a look-back (1-2) together stay within the 10 requests per 15 minutes that each authorized user adds to the app's allowance.
 
+## When Buffer says "not now"
+
+Every limit (Buffer's 429, the app-wide allowance margin, per-account budgets, the per-IP limit) reads as a short pause, not an error: what is happening, when to try again (the `Retry-After` turned into a local time), and that nothing was changed. The Scan and Look back buttons count down instead of failing again, sign-in says so before Buffer's consent screen, and an empty or paused state points to Look back and the sample queue.
+
 ## Development
 
 ```

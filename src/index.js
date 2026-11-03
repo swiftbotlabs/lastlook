@@ -19,7 +19,7 @@ import { checkLink, linkFlag, siteOf } from './net.js';
 import { parseIP } from './ip.js';
 import { gate } from './gate.js';
 import { createSession, readSession, deleteSession, deleteSessionByKey, setCookie, clearCookie, parseCookies, sealJSON, openJSON, randomToken, sha256, sha256hex, b64url, hmac, signer, safeEqual, SESSION_COOKIE, OAUTH_COOKIE } from './session.js';
-import { landingPage, appPage, tryPage, privacyPage, aboutPage, errorPage } from './pages.js';
+import { landingPage, appPage, tryPage, privacyPage, aboutPage, errorPage, retryHint } from './pages.js';
 export { Gate } from './gate.js';
 
 export const ORIGIN = 'https://lastlook.swiftbotlab.workers.dev';
@@ -157,6 +157,9 @@ async function pkcePair() {
 async function oauthStart(request, env) {
   if (await limited(env, 'RL_AUTH', clientIp(request), 10)) return html(errorPage('Slow down', 'Too many sign-in attempts from your network. Wait a minute and try again.'), 429);
   if (!env.BUFFER_CLIENT_ID || !env.BUFFER_CLIENT_SECRET) return html(errorPage('Not configured', 'Last Look is not configured yet.'), 503);
+  /* say "busy" now rather than after Buffer's consent screen; nothing is reserved here (the callback admits) */
+  const peek = await ask(env, { op: 'peek' });
+  if (!peek.ok) return html(errorPage('A short pause', (peek.message || 'Last Look is busy right now.') + ' ' + retryHint(peek.retryAfter), false, { calm: true }), 429, { 'retry-after': String(peek.retryAfter || 60) });
   const { verifier, challenge } = await pkcePair();
   const nonce = randomToken(24);
   const state = nonce + '.' + (await hmac(env, 'oauth-state', nonce)).slice(0, 22);
@@ -180,7 +183,7 @@ async function oauthCallback(request, env, url, ctx) {
   const state = String(url.searchParams.get('state') || '').slice(0, 200);
   const errorParam = url.searchParams.get('error');
   const code = String(url.searchParams.get('code') || '');
-  const page = (title, msg, status) => { const r = html(errorPage(title, msg, true), status); for (const c of clear) r.headers.append('set-cookie', c); return r; };
+  const page = (title, msg, status, calm) => { const r = html(errorPage(title, msg, true, { calm }), status); for (const c of clear) r.headers.append('set-cookie', c); return r; };
   if (!flow || !(flow.exp > Date.now())) return page('Sign-in expired', 'The sign-in took too long or started in another browser. Start again.', 400);
   const [nonce, sig] = state.split('.');
   const expectSig = nonce ? (await hmac(env, 'oauth-state', nonce)).slice(0, 22) : '';
@@ -189,7 +192,7 @@ async function oauthCallback(request, env, url, ctx) {
   if (!/^[A-Za-z0-9._~-]{8,2048}$/.test(code)) return page('Sign-in failed', 'Buffer returned an unexpected code. Start again.', 400);
   /* a sign-in spends one Buffer request: refuse early when the app allowance is nearly gone */
   const adm = await ask(env, { op: 'admit', kind: 'signin', calls: 1 });
-  if (!adm.ok) return page('Last Look is busy', adm.message || 'Try again in a few minutes.', 429);
+  if (!adm.ok) return page('A short pause', (adm.message || 'Last Look is busy right now.') + ' ' + retryHint(adm.retryAfter), 429, true);
   let tok;
   try {
     const ctl = new AbortController();
@@ -235,7 +238,7 @@ async function oauthCallback(request, env, url, ctx) {
   const bound = await ask(env, { op: 'bind', acct: acctHash, sk });
   if (!bound.ok) {
     await deleteSessionByKey(env, sk);
-    return page('Not now', bound.message || 'Too many sign-ins. Try again later.', 429);
+    return page('A short pause', (bound.message || 'Too many sign-ins for this account today.') + ' ' + retryHint(bound.retryAfter), 429, true);
   }
   if (bound.old) await later(ctx, deleteSessionByKey(env, bound.old));
   console.log(JSON.stringify({ ev: 'connected', replaced: !!bound.old }));
@@ -475,7 +478,7 @@ async function handle(request, env, ctx) {
       if (s && s.record.acct) {
         const cur = await ask(env, { op: 'current', acct: s.record.acct, sk: s.sk });
         if (cur.ok) return html(appPage({ csrf: s.record.csrf, name: s.record.name, expires: s.record.exp }));
-        if (cur.code === 'gate_down') return html(errorPage('Busy', 'Last Look is busy. Try again in a minute.'), 503);
+        if (cur.code === 'gate_down') return html(errorPage('A short pause', 'Last Look is busy for a moment. Try again in about a minute.', false, { calm: true }), 503, { 'retry-after': '60' });
         return html(landingPage(), 200, { 'set-cookie': clearCookie(SESSION_COOKIE) });
       }
       return html(landingPage());

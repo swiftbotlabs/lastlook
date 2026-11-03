@@ -228,7 +228,7 @@ function render() {
   }
   if (d.truncated) q.append(el('div', { class: 'banner warn' }, 'Your queue is large, so this scan stopped at the first posts. Scan again after fixing these to see the rest.'));
   if (d.meta && d.meta.repeatsPartial) q.append(el('div', { class: 'banner warn' }, 'Your queue is large, so repeated posts were only partly checked.'));
-  if (d.rateLow) q.append(el('div', { class: 'banner warn' }, 'Buffer’s request allowance for Last Look is nearly used up for now, so scans may pause for a while.'));
+  if (d.rateLow) q.append(el('div', { class: 'banner calm', role: 'status' }, el('strong', null, 'Heads up. '), 'Buffer’s shared request allowance for Last Look is nearly used for now, so the next scan may have to wait a few minutes. Your posts are safe either way.'));
   if (!d.channels.length || !posts.length) {
     const noCh = !d.channels.length;
     q.append(el('div', { class: 'empty' }, el('h2', { text: noCh ? 'No channels connected in Buffer' : 'Your queue is empty' }),
@@ -351,19 +351,30 @@ async function loadBack() {
   } catch (e) {
     if (e.status === 401) { state.backBusy = false; return sessionEnded(); }
     state.backError = e;
+    state.backRetryAt = e.retryAfter ? Date.now() + Math.min(e.retryAfter, 3600) * 1000 : 0;
   }
   state.backBusy = false;
   render();
+}
+/* the Look back "Try again" button waits out Retry-After with a countdown instead of failing again */
+function retryButton() {
+  const b = document.getElementById('back-retry');
+  if (!b) return;
+  const left = Math.ceil(((state.backRetryAt || 0) - Date.now()) / 1000);
+  b.disabled = left > 0;
+  b.textContent = left > 0 ? 'Try again in ' + (left > 90 ? Math.ceil(left / 60) + ' min' : left + ' s') : 'Try again';
 }
 function renderBack() {
   const q = $('queue');
   q.replaceChildren();
   if (!state.back) {
     if (state.backError) {
-      $('headline').textContent = isCalm(state.backError) ? 'A short pause' : 'Could not look back right now';
-      $('subline').textContent = 'Your queue is still on the Queue tab.';
+      const calm = isCalm(state.backError);
+      $('headline').textContent = calm ? 'A short pause' : 'Could not look back right now';
+      $('subline').textContent = calm ? 'Look back will be ready again shortly. Your queue tab still works.' : 'Your queue tab still works.';
       q.append(problemBanner(state.backError));
-      q.append(el('p', null, el('button', { type: 'button', class: 'btn', onclick: () => loadBack() }, 'Try again')));
+      q.append(el('p', null, el('button', { type: 'button', class: 'btn', id: 'back-retry', onclick: () => loadBack() }, 'Try again')));
+      retryButton();
       return;
     }
     $('headline').textContent = 'Looking back…';
@@ -769,6 +780,7 @@ async function init() {
   }
   setInterval(scanButton, 1000);
   setInterval(undoTick, 1000);
+  setInterval(retryButton, 1000);
   $('undo-btn').addEventListener('click', () => { if (state.undoBar) doUndo(state.undoBar); });
   if (location.hash === '#lookback') setView('back');
   doScan(false);

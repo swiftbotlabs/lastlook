@@ -144,12 +144,34 @@ test('OAuth callback: code + verifier + secret exchanged; a second sign-in of th
 
 test('OAuth callback is refused when the app allowance is nearly gone (before spending a Buffer call)', async () => {
   const env = makeEnv();
-  await env.GATE.obj.core.record({ '15m': { name: '15m', r: 4, t: 600, w: 900 } });
   const f = await startFlow(env);
+  /* the allowance drops while the user is on Buffer's consent screen */
+  await env.GATE.obj.core.record({ '15m': { name: '15m', r: 4, t: 600, w: 900 } });
   mockFetch(tokenAndAccount('acc-1'));
   const r = await worker.fetch(callback(f), env);
   assert.equal(r.status, 429);
   assert.equal(calls.length, 0);
+  const html = await r.text();
+  assert.match(html, /A short pause/);
+  assert.match(html, /Try again in about 10 minutes\./);
+  assert.match(html, /href="\/try">Try the sample queue/);
+});
+
+test('OAuth start says "a short pause" before the consent screen when the allowance is low; nothing is reserved', async () => {
+  const env = makeEnv();
+  const core = env.GATE.obj.core;
+  await core.record({ '15m': { name: '15m', r: 5, t: 420, w: 900 }, '24h': { name: '24h', r: 400, t: 80000, w: 86400 } });
+  let r = await worker.fetch(get('/oauth/start'), env);
+  assert.equal(r.status, 429);
+  assert.equal(r.headers.get('location'), null, 'no redirect to Buffer');
+  assert.equal(r.headers.get('retry-after'), '420');
+  const html = await r.text();
+  assert.match(html, /Try again in about 7 minutes\./);
+  assert.match(html, /href="\/try"/);
+  assert.equal(core.remaining(900), 5, 'a peek reserves nothing');
+  await core.record({ '15m': { name: '15m', r: 100, t: 420, w: 900 }, '24h': { name: '24h', r: 400, t: 80000, w: 86400 } });
+  r = await worker.fetch(get('/oauth/start'), env);
+  assert.equal(r.status, 303);
 });
 
 test('POST guards: per-IP limit runs before the session lookup; origin, session and CSRF required', async () => {
