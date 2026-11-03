@@ -389,3 +389,21 @@ test('disconnect deletes the session, unregisters it and clears the cookie', asy
   assert.equal((await env.GATE.obj.core.current(s.acct, s.sk)).ok, false);
   assert.equal((await worker.fetch(post('/api/scan', s, {}), env)).status, 401);
 });
+
+test('disconnect answers at once even when the store delete is slow; the session is refused immediately', async () => {
+  const env = makeEnv();
+  const s = await signIn(env);
+  let release;
+  const realDelete = env.SESSIONS.delete;
+  env.SESSIONS.delete = (k) => new Promise((res) => { release = () => res(realDelete(k)); });
+  const pending = [];
+  const ctx = { waitUntil: (p) => pending.push(p) };
+  const r = await worker.fetch(post('/api/disconnect', s, {}), env, ctx);
+  assert.equal(r.status, 200);
+  assert.equal(pending.length, 1, 'the delete runs after the reply');
+  assert.equal(env.SESSIONS._m.size, 1, 'not deleted yet');
+  assert.equal((await worker.fetch(post('/api/scan', s, {}), env, ctx)).status, 401, 'but already refused');
+  release();
+  await Promise.all(pending);
+  assert.equal(env.SESSIONS._m.size, 0);
+});

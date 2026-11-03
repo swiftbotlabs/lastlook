@@ -80,6 +80,12 @@ async function limited(env, binding, key, limit) {
 export function _resetLimits() { memLimits.clear(); }
 const clientIp = (request) => request.headers.get('cf-connecting-ip') || 'unknown';
 
+/* run a slow store write after the response when the runtime allows it (tests have no ctx: wait for it) */
+async function later(ctx, promise) {
+  const p = Promise.resolve(promise).catch(() => { /* best effort; the gate already refuses the session */ });
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(p); else await p;
+}
+
 /* ---------- gate helpers ---------- */
 async function ask(env, msg) {
   try { return await gate(env, msg); } catch (e) { return { ok: false, code: 'gate_down', message: 'Last Look is busy. Try again in a minute.', retryAfter: 60 }; }
@@ -122,12 +128,12 @@ async function guard(request, env) {
   return { session: s };
 }
 
-async function bufferFailure(e, s, env) {
+async function bufferFailure(e, s, env, ctx) {
   if (e instanceof BufferError) {
     if (e.rate) await noteRate(env, e.rate);
     if (e.kind === 'auth') {
-      await deleteSession(env, s.sid);
       await ask(env, { op: 'unbind', acct: s.record.acct, sk: s.sk });
+      await later(ctx, deleteSession(env, s.sid));
       return fail(401, 'not_connected', 'Buffer says this connection is no longer valid. Connect again.', { 'set-cookie': clearCookie(SESSION_COOKIE) });
     }
     if (e.kind === 'rate') return fail(429, 'buffer_rate', 'Buffer asked Last Look to slow down. Try again in ' + Math.ceil((e.retryAfter || 60) / 60) + ' min.', { 'retry-after': String(e.retryAfter || 60) });
@@ -160,7 +166,7 @@ async function oauthStart(request, env) {
   u.searchParams.set('prompt', 'consent');
   return redirect(u.toString(), [setCookie(OAUTH_COOKIE, sealed, 600)]);
 }
-async function oauthCallback(request, env, url) {
+async function oauthCallback(request, env, url, ctx) {
   if (await limited(env, 'RL_AUTH', clientIp(request), 10)) return html(errorPage('Slow down', 'Too many sign-in attempts from your network. Wait a minute and try again.'), 429);
   const clear = [clearCookie(OAUTH_COOKIE)];
   const sealed = parseCookies(request)[OAUTH_COOKIE];
@@ -225,7 +231,7 @@ async function oauthCallback(request, env, url) {
     await deleteSessionByKey(env, sk);
     return page('Not now', bound.message || 'Too many sign-ins. Try again later.', 429);
   }
-  if (bound.old) await deleteSessionByKey(env, bound.old);
+  if (bound.old) await later(ctx, deleteSessionByKey(env, bound.old));
   console.log(JSON.stringify({ ev: 'connected', replaced: !!bound.old }));
   return redirect('/', [...clear, setCookie(SESSION_COOKIE, sid, life)]);
 }
@@ -424,7 +430,7 @@ async function handle(request, env, ctx) {
       return html(landingPage());
     }
     if (path === '/oauth/start') return oauthStart(request, env);
-    if (path === '/oauth/callback') return oauthCallback(request, env, url);
+    if (path === '/oauth/callback') return oauthCallback(request, env, url, ctx);
     if (path === '/privacy') return html(privacyPage());
     if (path === '/about') return html(aboutPage());
     if (path === '/healthz') return json({ ok: true });
@@ -444,13 +450,14 @@ async function handle(request, env, ctx) {
     if (path === '/api/links') return await links(env, s, body);
     if (path === '/api/fix') return await fix(env, s, body);
     if (path === '/api/disconnect') {
+      /* the gate refuses the session from this moment; the KV delete (a write that can take seconds) runs after the reply */
       await ask(env, { op: 'unbind', acct: s.record.acct, sk: s.sk });
-      await deleteSession(env, s.sid);
+      await later(ctx, deleteSession(env, s.sid));
       console.log(JSON.stringify({ ev: 'disconnected' }));
       return json({ ok: true }, 200, { 'set-cookie': clearCookie(SESSION_COOKIE) });
     }
   } catch (e) {
-    return bufferFailure(e, s, env);
+    return bufferFailure(e, s, env, ctx);
   }
   return fail(404, 'not_found', 'Not found.');
 }

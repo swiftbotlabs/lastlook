@@ -11,7 +11,7 @@ What the app protects: each user's Buffer access token and their queued posts, a
 ## Sessions and tokens
 - Session id: 32 random bytes in a `__Host-` cookie (HttpOnly, Secure, SameSite=Lax, at most 1 hour).
 - KV key = SHA-256(session id); KV value = AES-256-GCM ciphertext under a key derived with HKDF from `SESSION_SECRET` and the session id.
-- One live session per Buffer account: the gate (Durable Object, strongly consistent) maps a hash of the account id to the hash of the current session id. A new sign-in replaces and deletes the older session; Disconnect unregisters it. Every page load and API call checks the registry, so a deleted session that KV still caches elsewhere for up to ~60 s is refused anyway.
+- One live session per Buffer account: the gate (Durable Object, strongly consistent) maps a hash of the account id to the hash of the current session id. A new sign-in replaces the older session; Disconnect unregisters it at once, and the KV record is deleted right after the reply (`ctx.waitUntil`, since KV deletes can take seconds). Every page load and API call checks the registry, so a deleted session that KV still caches elsewhere for up to ~60 s is refused anyway.
 - No refresh tokens (`offline_access` is not requested). Buffer 401 deletes and unregisters the session.
 
 ## Shared Buffer allowance (availability)
