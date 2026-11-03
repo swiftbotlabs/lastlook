@@ -1,0 +1,12 @@
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Cross-Origin-Resource-Policy: same-origin
+  X-Frame-Options: DENY
+/app.js
+  Cache-Control: public, max-age=300
+/app.css
+  Cache-Control: public, max-age=300
+/checks/*
+  Cache-Control: public, max-age=300

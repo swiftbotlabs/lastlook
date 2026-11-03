@@ -1,0 +1,40 @@
+# Last Look · Cloudflare Worker (Swift Bot Labs)
+# Deploy: ops/deploy.sh (runs tests and the asset build first).
+# Secrets (set with ops/put_secrets.sh, never in this file): BUFFER_CLIENT_ID, BUFFER_CLIENT_SECRET, SESSION_SECRET
+name = "lastlook"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+account_id = "14921b4b1158675445e98816b6a01992"
+workers_dev = true
+preview_urls = false
+
+[assets]
+directory = "public"
+
+[observability]
+enabled = true
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "87c3dab55170438f8e8ba7b5d96f4206"
+
+# Per-key rate limits (Workers rate limiting binding; period must be 10 or 60 seconds)
+[[ratelimits]]
+name = "RL_AUTH"
+namespace_id = "41001"
+simple = { limit = 10, period = 60 }
+
+[[ratelimits]]
+name = "RL_SCAN"
+namespace_id = "41002"
+simple = { limit = 4, period = 60 }
+
+[[ratelimits]]
+name = "RL_LINKS"
+namespace_id = "41003"
+simple = { limit = 30, period = 60 }
+
+[[ratelimits]]
+name = "RL_WRITE"
+namespace_id = "41004"
+simple = { limit = 10, period = 60 }
