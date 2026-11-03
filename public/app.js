@@ -1,12 +1,15 @@
 /* Last Look app. The server reads the queue (/api/scan); the checks run here in the browser, on the same code
    the server tests. The view is built with DOM nodes and textContent only: post text is third-party content and
-   is never parsed as HTML. After a fix, only that post is updated from Buffer's answer; nothing is rescanned. */
+   is never parsed as HTML. After a fix, only that post is updated from Buffer's answer; nothing is rescanned.
+   Two modes, one code path: on /try (meta mode=try) the backend is the local sample (./sample.js) and api()
+   refuses to run, so the sample page never calls the server, Buffer or the link checker. */
 import { lengthFor, limitFor, SERVICE_NAMES } from './checks/length.js';
 import { runAll } from './checks/index.js';
 
 const $ = (id) => document.getElementById(id);
 const meta = (n) => { if (typeof document === 'undefined') return ''; const m = document.querySelector('meta[name="' + n + '"]'); return m ? m.getAttribute('content') : ''; };
 const CSRF = meta('csrf');
+export const MODE = meta('mode') === 'try' ? 'try' : 'live';
 const SESSION_EXP = Number(meta('session-exp')) || 0;
 const SEV_RANK = { high: 0, medium: 1, low: 2 };
 const SEV_CLASS = { high: 'sev-high', medium: 'sev-med', low: 'sev-low' };
@@ -37,6 +40,7 @@ function el(tag, attrs, ...kids) {
   return n;
 }
 async function api(path, body) {
+  if (MODE === 'try') throw new Error('The sample queue never talks to the server.');
   let r;
   try {
     r = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-csrf-token': CSRF }, body: JSON.stringify(body || {}) });
@@ -51,6 +55,14 @@ async function api(path, body) {
   }
   return j;
 }
+/* where scans, link checks and fixes go: the Worker for a real account, the local sample on /try */
+const liveBackend = {
+  scan: () => api('/api/scan', {}),
+  checkLinks: (body) => api('/api/links', body),
+  fix: (body) => api('/api/fix', body)
+};
+let backend = liveBackend;
+const T = (liveText, tryText) => (MODE === 'try' ? tryText : liveText);
 async function sha256hex(s) {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return Array.from(new Uint8Array(d), (x) => x.toString(16).padStart(2, '0')).join('');
@@ -161,7 +173,9 @@ function render() {
   if (!d.channels.length || !posts.length) {
     q.append(el('div', { class: 'empty' }, el('h2', { text: !d.channels.length ? 'No channels connected in Buffer' : 'Your queue is empty' }),
       el('p', { text: !d.channels.length ? 'Last Look checks posts queued in Buffer. Add a channel there first.' : 'Queue some posts in Buffer, then scan again for a last look before they go out.' }),
-      el('a', { class: 'btn btn-primary', href: 'https://publish.buffer.com', rel: 'noopener noreferrer', target: '_blank' }, 'Open Buffer')));
+      el('div', { class: 'cta-row center' },
+        el('a', { class: 'btn btn-primary', href: 'https://publish.buffer.com', rel: 'noopener noreferrer', target: '_blank' }, 'Open Buffer'),
+        el('a', { class: 'btn', href: '/try' }, 'See a sample queue'))));
     return;
   }
   const byChannel = new Map(d.channels.map((c) => [c.id, []]));
@@ -311,7 +325,7 @@ function openEdit(post, channel, suggestion, label) {
     title: suggestion ? (label || 'Apply suggestion') : 'Edit post',
     desc: suggestion ? 'Here is the suggested text. Change anything you like; nothing is saved until you press Save.' : 'Change the text below. Nothing is saved until you press Save. The schedule stays as it is.',
     text: suggestion != null ? suggestion : post.text,
-    ok: 'Save to Buffer'
+    ok: T('Save to Buffer', 'Save to sample')
   });
 }
 function openSimple(post, channel, action, position) {
@@ -339,10 +353,10 @@ async function confirmDialog() {
     const body = { postId: raw.id, action: cfg.action, confirm: true, expectedHash: await sha256hex(raw.text || ''), ts: raw.pts, ptok: raw.ptok };
     if (cfg.action === 'edit') body.text = $('dlg-text').value;
     if (cfg.action === 'move') body.position = cfg.position;
-    const res = await api('/api/fix', body);
+    const res = await backend.fix(body);
     closeDialog();
     applyFixResult(res);
-    toast(cfg.action === 'edit' ? 'Saved to Buffer.' : cfg.action === 'draft' ? 'Moved to drafts.' : 'Moved in the queue.');
+    toast((cfg.action === 'edit' ? T('Saved to Buffer.', 'Saved.') : cfg.action === 'draft' ? 'Moved to drafts.' : 'Moved in the queue.') + T('', ' Sample only: nothing was sent to Buffer.'));
   } catch (e) {
     if (e.status === 401) { closeDialog(); return sessionEnded(); }
     $('dlg-error').textContent = e.message;
@@ -358,6 +372,12 @@ function applyFixResult(res) {
   const i = state.raw.posts.findIndex((x) => x.id === res.post.id);
   const updated = Object.assign({}, res.post, { pts: res.ts });
   if (i >= 0) state.raw.posts[i] = updated; else state.raw.posts.push(updated);
+  /* the sample also reports the posts whose queue slot changed after a move (Buffer's answer has only the moved post) */
+  for (const sp of res.shifted || []) {
+    const k = state.raw.posts.findIndex((x) => x.id === sp.id);
+    if (k >= 0) state.raw.posts[k] = Object.assign({}, sp, { pts: res.ts });
+  }
+  if (res.shifted && res.shifted.length) state.raw.posts.sort((a, b) => (Date.parse(a.dueAt) || Infinity) - (Date.parse(b.dueAt) || Infinity));
   for (const l of res.links || []) if (!state.links.has(l.url)) state.linkQueue.push({ url: l.url, sig: l.sig, ts: res.ts });
   recompute();
   render();
@@ -377,12 +397,12 @@ async function doScan(quiet) {
   state.busy = true;
   $('rescan').disabled = true;
   $('rescan').textContent = 'Scanning…';
-  if (!quiet && !state.data) $('subline').textContent = 'Reading your queue from Buffer…';
+  if (!quiet && !state.data) $('subline').textContent = T('Reading your queue from Buffer…', 'Loading the sample queue…');
   try {
-    const d = await api('/api/scan', {});
+    const d = await backend.scan();
     for (const p of d.posts) p.pts = d.ts;
     state.raw = d;
-    state.nextScanAt = Date.now() + SCAN_GAP_MS;
+    state.nextScanAt = MODE === 'try' ? 0 : Date.now() + SCAN_GAP_MS;
     recompute();
     const now = Date.now();
     for (const [u, r] of state.links) if (now - r.at > LINK_TTL) state.links.delete(u);
@@ -405,7 +425,7 @@ function scanButton() {
   const b = $('rescan');
   if (state.busy) return;
   const left = Math.ceil((state.nextScanAt - Date.now()) / 1000);
-  if (left > 0) { b.disabled = true; b.textContent = 'Scan again in ' + left + ' s'; } else { b.disabled = false; b.textContent = 'Scan again'; }
+  if (left > 0) { b.disabled = true; b.textContent = 'Scan again in ' + left + ' s'; } else { b.disabled = false; b.textContent = T('Scan again', 'Reset sample'); }
 }
 async function runLinks() {
   if (state.linkRunning) return;
@@ -423,7 +443,7 @@ async function runLinks() {
         if (state.linkQueue[i].ts === ts) batch.push(state.linkQueue.splice(i, 1)[0]); else i++;
       }
       let res;
-      try { res = await api('/api/links', { ts, items: batch.map((b) => ({ url: b.url, sig: b.sig })) }); } catch (e) {
+      try { res = await backend.checkLinks({ ts, items: batch.map((b) => ({ url: b.url, sig: b.sig })) }); } catch (e) {
         if (e.status === 401) return sessionEnded();
         if (e.status === 429 && (e.retryAfter || 10) <= 60 && !batch.retried) { batch.retried = true; state.linkQueue.unshift(...batch); await new Promise((r) => setTimeout(r, Math.max(5, e.retryAfter || 10) * 1000)); continue; }
         for (const b of batch) state.links.set(b.url, { at: Date.now(), flag: unchecked(b.url, e.status === 410 ? 'the check expired; scan again to check it' : e.message) });
@@ -442,7 +462,7 @@ async function runLinks() {
       render();
     }
     const broken = Array.from(state.links.values()).filter((r) => r.flag && r.flag.severity === 'high').length;
-    status.textContent = total ? plural(total, 'link') + ' checked' + (broken ? ', ' + broken + ' broken' : ', none broken') : '';
+    status.textContent = total ? plural(total, 'link') + ' checked' + (broken ? ', ' + broken + ' broken' : ', none broken') + T('', ' (sample results)') : '';
   } finally {
     state.linkRunning = false;
     render();
@@ -467,8 +487,15 @@ function sessionClock() {
   if (left <= 0) { note.textContent = 'Session ended.'; return; }
   note.textContent = 'This session ends in ' + plural(Math.max(1, Math.round(left / 60000)), 'minute') + '. Disconnect deletes it now. Last Look keeps no copy of your posts.';
 }
-function init() {
-  $('rescan').addEventListener('click', () => doScan(false));
+async function init() {
+  if (MODE === 'try') {
+    const { SampleBackend } = await import('./sample.js');
+    const sample = new SampleBackend();
+    backend = { scan: () => sample.scan(), checkLinks: (b) => sample.checkLinks(b), fix: (b) => sample.fix(b) };
+    $('rescan').addEventListener('click', () => { sample.reset(); state.links.clear(); state.linkQueue = []; state.raw = null; state.data = null; doScan(false).then(() => toast('Sample reset.')); });
+  } else {
+    $('rescan').addEventListener('click', () => doScan(false));
+  }
   $('f-flagged').addEventListener('click', () => setFilter('flagged'));
   $('f-all').addEventListener('click', () => setFilter('all'));
   $('f-notes').addEventListener('change', (e) => { state.notes = e.target.checked; render(); });
@@ -477,14 +504,16 @@ function init() {
   $('dlg-cancel').addEventListener('click', closeDialog);
   $('dlg').addEventListener('close', () => { state.dialog = null; });
   $('dlg-form').addEventListener('submit', (e) => e.preventDefault());
-  $('disconnect').addEventListener('click', async () => {
-    const b = $('disconnect');
-    b.disabled = true; b.textContent = 'Disconnecting…';
-    try { await api('/api/disconnect', {}); } catch (e) { /* the session may already be gone */ }
-    location.replace('/');
-  });
-  sessionClock();
-  setInterval(sessionClock, 30000);
+  if (MODE === 'live') {
+    $('disconnect').addEventListener('click', async () => {
+      const b = $('disconnect');
+      b.disabled = true; b.textContent = 'Disconnecting…';
+      try { await api('/api/disconnect', {}); } catch (e) { /* the session may already be gone */ }
+      location.replace('/');
+    });
+    sessionClock();
+    setInterval(sessionClock, 30000);
+  }
   setInterval(scanButton, 1000);
   doScan(false);
 }

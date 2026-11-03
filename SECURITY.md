@@ -29,6 +29,10 @@ What the app protects: each user's Buffer access token and their queued posts, a
 - Only `editPost` (text, or text + saveToDraft) and `movePostInQueue` exist in the code. No create, publish, share-now or delete path.
 - Each write needs `confirm: true`, the post token, and the SHA-256 of the text the user saw; the server re-reads the post and refuses on any mismatch, on a send time under 3 minutes away, on threads, on statuses other than scheduled/awaiting approval/draft, and when Buffer's `allowedActions` do not include the action.
 
+## The /try sample page
+- Served without a session and without a CSRF token; it never reads the session store or asks the gate.
+- In try mode the page's backend is `public/sample.js`, which has no network code; `api()` refuses to run before any `fetch`, so the sample page cannot reach `/api/*`, Buffer or the link checker (tests cover both). Sample links use reserved `.example` names and their results are fixed data.
+
 ## Showing third-party text
 - The checks and the view run in the browser; post text, channel names and Buffer messages are rendered only through `textContent` (a test fails if `innerHTML` and friends appear in `public/app.js`). Server pages escape every dynamic value.
 - CSP: `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:` plus Buffer's avatar hosts only; `connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`. Avatar URLs from other hosts are dropped server-side. Plus nosniff, no-referrer, HSTS, X-Frame-Options DENY, COOP.

@@ -7,6 +7,7 @@
      POST /api/links         check up to 6 links found by a scan (server-signed, 10-minute expiry)
      POST /api/fix           edit text / move to drafts / move in queue, one post the scan returned, after confirm
      POST /api/disconnect    delete the session and its token
+     GET  /try               the same app on a made-up sample queue (no session, no server or Buffer calls)
      GET  /privacy, /about, /healthz
    Every POST needs the session cookie, a same-origin Origin header and the session's CSRF token.
    Every request that spends Buffer's per-app allowance or checks links asks the gate (src/gate.js) first. */
@@ -17,7 +18,7 @@ import { checkLink, linkFlag, siteOf } from './net.js';
 import { parseIP } from './ip.js';
 import { gate } from './gate.js';
 import { createSession, readSession, deleteSession, deleteSessionByKey, setCookie, clearCookie, parseCookies, sealJSON, openJSON, randomToken, sha256, sha256hex, b64url, hmac, signer, safeEqual, SESSION_COOKIE, OAUTH_COOKIE } from './session.js';
-import { landingPage, appPage, privacyPage, aboutPage, errorPage } from './pages.js';
+import { landingPage, appPage, tryPage, privacyPage, aboutPage, errorPage } from './pages.js';
 export { Gate } from './gate.js';
 
 export const ORIGIN = 'https://lastlook.swiftbotlab.workers.dev';
@@ -431,6 +432,7 @@ async function handle(request, env, ctx) {
     }
     if (path === '/oauth/start') return oauthStart(request, env);
     if (path === '/oauth/callback') return oauthCallback(request, env, url, ctx);
+    if (path === '/try') return html(tryPage());
     if (path === '/privacy') return html(privacyPage());
     if (path === '/about') return html(aboutPage());
     if (path === '/healthz') return json({ ok: true });

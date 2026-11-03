@@ -2,7 +2,7 @@
    the app page is a shell, and public/app.js builds the queue view with textContent. */
 
 export const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const V = '20261103e';
+const V = '20261103f';
 
 const LOGO = '<svg class="logo" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect x="1" y="1" width="30" height="30" rx="8" class="logo-bg"/><path d="M6 17.5c2.6-4.4 6-6.6 10-6.6s7.4 2.2 10 6.6c-2.6 4.4-6 6.6-10 6.6s-7.4-2.2-10-6.6z" class="logo-eye"/><circle cx="16" cy="17.5" r="3.4" class="logo-pupil"/><path d="M9 8.2h14" class="logo-line"/></svg>';
 
@@ -20,6 +20,7 @@ function shell(title, body, opts) {
 <meta name="theme-color" content="#14161a" media="(prefers-color-scheme: dark)">
 ${o.csrf ? `<meta name="csrf" content="${esc(o.csrf)}">` : ''}
 ${o.expires ? `<meta name="session-exp" content="${esc(String(o.expires))}">` : ''}
+${o.mode ? `<meta name="mode" content="${esc(o.mode)}">` : ''}
 <link rel="icon" href="/icon.svg?v=${V}" type="image/svg+xml">
 <link rel="stylesheet" href="/app.css?v=${V}">
 ${o.script ? `<script type="module" src="/app.js?v=${V}"></script>` : ''}
@@ -49,7 +50,7 @@ export function landingPage() {
     <p class="lead">Last Look reads every post waiting in your Buffer queue and flags what would make you wince once it is live: a dead link, a “tomorrow” that will mean the wrong day, Markdown that shows up as asterisks, a post too long for the network, the same post queued twice. Fix each one in a click. Nothing changes until you confirm.</p>
     <div class="cta-row">
       <a class="btn btn-primary btn-lg" href="/oauth/start">Connect Buffer</a>
-      <a class="btn btn-quiet" href="/about">See how it works</a>
+      <a class="btn btn-lg" href="/try">Try it without connecting</a>
     </div>
     <ul class="trust" aria-label="Promises">
       <li>Reads your queue, changes nothing on its own</li>
@@ -92,22 +93,23 @@ export function landingPage() {
       <li><strong>Move in the queue.</strong> Send a repeat to the back of the queue.</li>
     </ol>
     <p class="note">Every change goes through Buffer’s own API, only when you press confirm, and only on the post you picked.</p>
-    <p><a class="btn btn-primary" href="/oauth/start">Connect Buffer</a></p>
+    <p class="cta-row"><a class="btn btn-primary" href="/oauth/start">Connect Buffer</a><a class="btn" href="/try">Try the sample queue</a></p>
   </section>
 </main>`, {});
 }
 
-export function appPage(o) {
-  const nav = '<span class="who" id="who">' + (o.name ? 'Connected as ' + esc(o.name) : 'Connected to Buffer') + '</span><button type="button" class="btn btn-small btn-quiet" id="disconnect">Disconnect</button>';
-  return shell('Last Look: your queue', `
-<main id="main" class="app">
+function appBody(o) {
+  const banner = o.sample ? `
+  <div class="banner try" role="note"><strong>Sample queue, made up for this demo.</strong> These are the queued posts of Little Kiln Studio, a fictional pottery studio, checked by the same code Last Look runs on a real Buffer queue. Nothing here is sent to Buffer; fixes change only this page. <a href="/oauth/start">Connect Buffer</a> to check your own.</div>` : '';
+  return `
+<main id="main" class="app">${banner}
   <section class="summary" aria-live="polite">
     <div class="summary-main">
-      <h1 id="headline">Reading your queue…</h1>
-      <p id="subline" class="muted">This takes a few seconds.</p>
+      <h1 id="headline">${o.sample ? 'Loading the sample…' : 'Reading your queue…'}</h1>
+      <p id="subline" class="muted">${o.sample ? 'One moment.' : 'This takes a few seconds.'}</p>
     </div>
     <div class="summary-actions">
-      <button type="button" class="btn" id="rescan" disabled>Scan again</button>
+      <button type="button" class="btn" id="rescan" disabled>${o.sample ? 'Reset sample' : 'Scan again'}</button>
     </div>
   </section>
   <div class="toolbar" role="group" aria-label="Show">
@@ -117,7 +119,7 @@ export function appPage(o) {
     <span class="links-status muted" id="links-status" aria-live="polite"></span>
   </div>
   <div id="queue" class="queue"><div class="skeleton" aria-hidden="true"><div></div><div></div><div></div></div></div>
-  <p class="session-note muted" id="session-note"></p>
+  <p class="session-note muted" id="session-note">${o.sample ? 'The sample lives only in this tab. Reset sample or reload to start over.' : ''}</p>
 </main>
 <dialog id="dlg" aria-labelledby="dlg-title">
   <form method="dialog" class="dlg-body" id="dlg-form">
@@ -133,11 +135,22 @@ export function appPage(o) {
     <p class="dlg-error" id="dlg-error" role="alert" hidden></p>
     <div class="dlg-actions">
       <button type="button" class="btn btn-quiet" id="dlg-cancel" value="cancel">Cancel</button>
-      <button type="button" class="btn btn-primary" id="dlg-ok">Save to Buffer</button>
+      <button type="button" class="btn btn-primary" id="dlg-ok">${o.sample ? 'Save to sample' : 'Save to Buffer'}</button>
     </div>
   </form>
 </dialog>
-<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>`, { csrf: o.csrf, expires: o.expires, script: true, nav, bodyClass: 'is-app' });
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>`;
+}
+
+export function appPage(o) {
+  const nav = '<span class="who" id="who">' + (o.name ? 'Connected as ' + esc(o.name) : 'Connected to Buffer') + '</span><button type="button" class="btn btn-small btn-quiet" id="disconnect">Disconnect</button>';
+  return shell('Last Look: your queue', appBody({}), { csrf: o.csrf, expires: o.expires, script: true, nav, bodyClass: 'is-app' });
+}
+
+/* /try: the same app on a made-up queue. No session, no CSRF token: the page has nothing to send to the server. */
+export function tryPage() {
+  const nav = '<span class="who">Sample queue</span><a class="btn btn-small btn-primary" href="/oauth/start">Connect Buffer</a>';
+  return shell('Try Last Look: a sample queue', appBody({ sample: true }), { script: true, nav, bodyClass: 'is-app is-try', mode: 'try' });
 }
 
 export function privacyPage() {
@@ -215,7 +228,7 @@ export function aboutPage() {
     <li>Some sites block automated visitors; those links are marked as “probably fine, open it once” rather than broken.</li>
     <li>Day words are a judgment call. When a post has its own fixed time, Last Look only notes what “tomorrow” will mean, it does not call it wrong.</li>
   </ul>
-  <p><a class="btn btn-primary" href="/oauth/start">Connect Buffer</a></p>
+  <p class="cta-row"><a class="btn btn-primary" href="/oauth/start">Connect Buffer</a><a class="btn" href="/try">Try the sample queue</a></p>
 </main>`, {});
 }
 

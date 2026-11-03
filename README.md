@@ -4,7 +4,11 @@ A last look at your Buffer queue before it posts.
 
 Last Look connects to Buffer with OAuth, reads every scheduled post, post awaiting approval and draft across your channels, and flags what would embarrass you once it is live. Each flag comes with a fix that goes through the Buffer API, only after you confirm it.
 
-Live: https://lastlook.swiftbotlab.workers.dev
+Live: https://lastlook.swiftbotlab.workers.dev · No-login demo: https://lastlook.swiftbotlab.workers.dev/try
+
+## Try it without connecting
+
+`/try` opens the same app on a sample queue: twelve posts from a made-up pottery studio on X, LinkedIn, Bluesky and Instagram, built relative to today so every check fires on any date. The page runs the same check code as the real app, and the edit (with diff and live count), move-to-drafts and queue-reorder fixes work on the sample. The sample's backend lives in the page (`public/sample.js`): it has no session, sends nothing to the server or to Buffer, and its link results are part of the sample (reserved `.example` domains, each flag identical to what the real checker produces for that result, held in step by a test).
 
 ## What it checks
 
@@ -45,7 +49,7 @@ node ops/ssrf_live_probe.mjs    # live-DNS check that private-resolving names ar
 npx wrangler deploy             # with CLOUDFLARE_API_TOKEN in the environment
 ```
 
-Layout: `src/index.js` (routes, OAuth, scan, fixes), `src/gate.js` (Durable Object: sessions registry, allowance, budgets, link limits), `src/session.js` (encrypted sessions), `src/buffer.js` (GraphQL client and queries), `src/net.js` + `src/ip.js` (link checker and SSRF guard), `src/checks/*` (the checks), `src/pages.js` (server pages), `public/` (browser app and styles).
+Layout: `public/sample.js` (the /try sample and its local backend), `src/index.js` (routes, OAuth, scan, fixes), `src/gate.js` (Durable Object: sessions registry, allowance, budgets, link limits), `src/session.js` (encrypted sessions), `src/buffer.js` (GraphQL client and queries), `src/net.js` + `src/ip.js` (link checker and SSRF guard), `src/checks/*` (the checks), `src/pages.js` (server pages), `public/` (browser app and styles).
 
 Runs on Cloudflare Workers with one KV namespace for sessions, one Durable Object class, the Workers rate-limiting binding (per IP) and `global_fetch_strictly_public`. Request logging is off. Worker secrets: `BUFFER_CLIENT_ID`, `BUFFER_CLIENT_SECRET`, `SESSION_SECRET`.
 
