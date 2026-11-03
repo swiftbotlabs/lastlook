@@ -130,17 +130,19 @@ export function checkFormatting(post, channel) {
       if (!byRule.has(h.rule.id)) byRule.set(h.rule.id, []);
       byRule.get(h.rule.id).push(h);
     }
+    const rules = Array.from(byRule.values()).map((list) => list[0].rule);
+    const severity = rules.some((r) => (r.severity || 'medium') === 'medium') ? 'medium' : 'low';
     const fixed = cleanFormatting(it.text);
-    for (const [id, list] of byRule) {
-      const rule = list[0].rule;
-      flags.push({
-        check: 'format', id, severity: rule.severity || 'medium', where: it.where,
-        title: rule.title + (list.length > 1 ? ' (' + list.length + ')' : ''),
-        detail: rule.explain(svc) + ' Found: ' + list.slice(0, 3).map((h) => '"' + clip(String(it.text).slice(h.start, h.end), 40) + '"').join(', ') + '.',
-        spans: list.map((h) => [h.start, h.end]),
-        fixes: it.where === 'text' ? [{ type: 'edit', label: 'Clean up formatting', text: fixed }] : []
-      });
-    }
+    const examples = hits.slice(0, 4).map((h) => '"' + clip(String(it.text).slice(h.start, h.end).trim() || String(it.text).slice(h.start, h.end), 32) + '"').join(', ');
+    const single = rules.length === 1;
+    flags.push({
+      check: 'format', id: single ? rules[0].id : 'format.mixed', severity, where: it.where,
+      title: single ? rules[0].title + (hits.length > 1 ? ' (' + hits.length + ')' : '') : svc + ' will show this formatting as raw text (' + hits.length + ')',
+      detail: (single ? rules[0].explain(svc) : svc + ' does not render Markdown or HTML, so these show up exactly as typed.') + ' Found: ' + examples + (hits.length > 4 ? ' and more' : '') + '.',
+      spans: hits.map((h) => [h.start, h.end]),
+      data: { rules: rules.map((r) => r.id), count: hits.length },
+      fixes: it.where === 'text' && fixed !== it.text ? [{ type: 'edit', label: 'Clean up formatting', text: fixed }] : []
+    });
   }
   return flags;
 }

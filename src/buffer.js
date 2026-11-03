@@ -124,7 +124,9 @@ export const Q_POST = `query One($id: PostId!) { post(input: { id: $id }) { ${PO
 
 const RESULT = '__typename ... on PostActionSuccess { post { id status dueAt text shareMode isCustomScheduled } } ... on MutationError { message }';
 export const M_EDIT_TEXT = `mutation EditText($id: PostId!, $text: String!) { editPost(input: { id: $id, text: $text }) { ${RESULT} } }`;
-export const M_TO_DRAFT = `mutation ToDraft($id: PostId!) { editPost(input: { id: $id, saveToDraft: true }) { ${RESULT} } }`;
+/* Buffer validates the edited post as a whole: an edit that sends only saveToDraft is refused with
+   "Post must have either text or media", so the current text (re-read and hash-checked just before) is sent along. */
+export const M_TO_DRAFT = `mutation ToDraft($id: PostId!, $text: String!) { editPost(input: { id: $id, text: $text, saveToDraft: true }) { ${RESULT} } }`;
 export const M_MOVE = `mutation Move($id: PostId!, $position: QueuePosition!) { movePostInQueue(input: { id: $id, position: $position }) { ${RESULT} } }`;
 
 /* ---------- shaping ---------- */

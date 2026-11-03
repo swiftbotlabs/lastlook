@@ -3,7 +3,7 @@
 import { lengthFor, limitFor, SERVICE_NAMES } from './checks/length.js';
 
 const $ = (id) => document.getElementById(id);
-const meta = (n) => { const m = document.querySelector('meta[name="' + n + '"]'); return m ? m.getAttribute('content') : ''; };
+const meta = (n) => { if (typeof document === 'undefined') return ''; const m = document.querySelector('meta[name="' + n + '"]'); return m ? m.getAttribute('content') : ''; };
 const CSRF = meta('csrf');
 const SESSION_EXP = Number(meta('session-exp')) || 0;
 const SEV_RANK = { high: 0, medium: 1, low: 2 };
@@ -209,9 +209,11 @@ function renderPost(p, ch) {
   if (extras.length) art.append(el('p', { class: 'channel-sub' }, extras.join(' · ')));
   if (flags.length) {
     const ul = el('ul', { class: 'flags' });
+    const seenSugg = new Set();
     for (const f of flags) {
       const body = el('div', { class: 'flag-body' }, el('span', { class: 'sev' }, SEV_WORD[f.severity]), el('strong', null, f.title), el('p', null, f.detail));
-      const sugg = (f.fixes || []).filter((x) => x.type === 'edit' && typeof x.text === 'string');
+      const sugg = (f.fixes || []).filter((x) => x.type === 'edit' && typeof x.text === 'string' && x.text !== p.text && !seenSugg.has(x.text));
+      for (const x of sugg) seenSugg.add(x.text);
       if (sugg.length) body.append(el('div', { class: 'fix-row' }, sugg.map((x) => el('button', { type: 'button', class: 'btn btn-small', onclick: () => openEdit(p, ch, x.text, x.label) }, x.label || 'Apply suggestion'))));
       ul.append(el('li', { class: 'flag ' + SEV_CLASS[f.severity] }, el('span', { class: 'dot', 'aria-hidden': 'true' }), body));
     }

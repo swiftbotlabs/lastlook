@@ -278,7 +278,7 @@ async function fix(env, s, body) {
   } else if (action === 'draft') {
     if (!LIVE.has(post.status)) return fail(409, 'not_queued', 'Only queued posts can be moved to drafts.');
     if (acts.size && !acts.has('movePostToDraft')) return fail(403, 'not_allowed', 'Buffer does not let this account move that post to drafts.');
-    m = M_TO_DRAFT; vars = { id: postId };
+    m = M_TO_DRAFT; vars = { id: postId, text: post.text };
   } else {
     const position = body.position === 'top' ? 'top' : body.position === 'bottom' ? 'bottom' : null;
     if (!position) return fail(400, 'bad_input', 'Pick top or bottom.');

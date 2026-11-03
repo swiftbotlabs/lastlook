@@ -80,7 +80,7 @@ export function normalizeForCompare(text) {
     pos = u.end;
   }
   out += s.slice(pos);
-  return out.toLowerCase().replace(/[^\p{L}\p{N}\s./#@]+/gu, ' ').replace(/\s+/g, ' ').trim();
+  return out.toLowerCase().replace(/[^\p{L}\p{N}\s./#@]+/gu, ' ').replace(/\.(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])\./gu, ' ').replace(/\s+/g, ' ').trim();
 }
 export function canonicalUrl(u) {
   try {
