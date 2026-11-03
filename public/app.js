@@ -197,7 +197,7 @@ function render() {
     }
     const calm = isCalm(state.scanError);
     $('headline').textContent = calm ? 'A short pause' : 'Could not read your queue';
-    $('subline').textContent = calm ? 'Last Look will be ready to scan again shortly.' : '';
+    $('subline').textContent = calm ? (canAutoRetry() ? 'Last Look will scan again on its own when the button is ready.' : 'Last Look will be ready to scan again later.') : '';
     q.append(problemBanner(state.scanError));
     q.append(el('div', { class: 'empty' }, el('h2', { text: 'Meanwhile' }),
       el('p', { text: 'Look back at what already went out, or see what Last Look catches on a sample queue.' }),
@@ -669,11 +669,17 @@ async function doScan(quiet) {
     scanButton();
   }
 }
+/* a first scan refused for a short pause runs again by itself once, when the wait is over (waits up to 2 minutes) */
+function canAutoRetry() {
+  const e = state.scanError;
+  return MODE === 'live' && !state.data && !!e && isCalm(e) && (e.retryAfter || 60) <= 120 && state.autoRetried !== e;
+}
 /* the server allows one scan a minute: the button counts down instead of failing */
 function scanButton() {
   const b = $('rescan');
   if (state.busy) return;
   const left = Math.ceil((state.nextScanAt - Date.now()) / 1000);
+  if (left <= 0 && canAutoRetry()) { state.autoRetried = state.scanError; doScan(false); return; }
   if (left > 0) { b.disabled = true; b.textContent = 'Scan again in ' + left + ' s'; } else { b.disabled = false; b.textContent = T('Scan again', 'Reset sample'); }
 }
 async function runLinks() {
