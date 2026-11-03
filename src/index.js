@@ -101,6 +101,8 @@ async function guard(request, env) {
   if (!s) return { error: fail(401, 'not_connected', 'Your session ended. Connect Buffer again.') };
   const token = request.headers.get('x-csrf-token') || '';
   if (!safeEqual(token, s.record.csrf)) return { error: fail(403, 'bad_csrf', 'This page is out of date. Reload it and try again.') };
+  /* rate-limit key: a hash, so the session id itself never leaves this Worker */
+  s.rlKey = (await sha256hex('rl:' + s.sid)).slice(0, 32);
   return { session: s };
 }
 
@@ -159,7 +161,7 @@ async function oauthCallback(request, env, url) {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), 15000);
     const r = await fetch(TOKEN, {
-      method: 'POST', signal: ctl.signal,
+      method: 'POST', signal: ctl.signal, redirect: 'manual',
       headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
       body: new URLSearchParams({ client_id: env.BUFFER_CLIENT_ID, client_secret: env.BUFFER_CLIENT_SECRET, grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI, code_verifier: flow.verifier })
     });
@@ -323,15 +325,15 @@ async function handle(request, env, ctx) {
   try { body = await readJson(request); } catch (e) { return fail(400, 'bad_input', e.message === 'too_large' ? 'Request too large.' : 'Bad request.'); }
   try {
     if (path === '/api/scan') {
-      if (await limited(env, 'RL_SCAN', s.sid, 4)) return fail(429, 'slow_down', 'You scanned a moment ago. Wait a few seconds and try again.', { 'retry-after': '20' });
+      if (await limited(env, 'RL_SCAN', s.rlKey, 4)) return fail(429, 'slow_down', 'You scanned a moment ago. Wait a few seconds and try again.', { 'retry-after': '20' });
       return json(Object.assign({ ok: true }, await scan(env, s)));
     }
     if (path === '/api/links') {
-      if (await limited(env, 'RL_LINKS', s.sid, 30)) return fail(429, 'slow_down', 'Too many link checks at once. Wait a moment.', { 'retry-after': '20' });
+      if (await limited(env, 'RL_LINKS', s.rlKey, 30)) return fail(429, 'slow_down', 'Too many link checks at once. Wait a moment.', { 'retry-after': '20' });
       return await links(env, s, body);
     }
     if (path === '/api/fix') {
-      if (await limited(env, 'RL_WRITE', s.sid, 10)) return fail(429, 'slow_down', 'Too many changes in a minute. Wait a moment.', { 'retry-after': '30' });
+      if (await limited(env, 'RL_WRITE', s.rlKey, 10)) return fail(429, 'slow_down', 'Too many changes in a minute. Wait a moment.', { 'retry-after': '30' });
       return await fix(env, s, body);
     }
     if (path === '/api/disconnect') {

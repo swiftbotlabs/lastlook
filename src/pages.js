@@ -2,7 +2,7 @@
    the app page is a shell, and public/app.js builds the queue view with textContent. */
 
 export const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const V = '20261103d';
+const V = '20261103e';
 
 const LOGO = '<svg class="logo" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect x="1" y="1" width="30" height="30" rx="8" class="logo-bg"/><path d="M6 17.5c2.6-4.4 6-6.6 10-6.6s7.4 2.2 10 6.6c-2.6 4.4-6 6.6-10 6.6s-7.4-2.2-10-6.6z" class="logo-eye"/><circle cx="16" cy="17.5" r="3.4" class="logo-pupil"/><path d="M9 8.2h14" class="logo-line"/></svg>';
 
@@ -42,6 +42,7 @@ ${body}
 export function landingPage() {
   return shell('Last Look for Buffer', `
 <main id="main" class="landing">
+  <div class="hero-wrap">
   <section class="hero">
     <p class="eyebrow">For your Buffer queue</p>
     <h1>Catch the embarrassing post before your audience does.</h1>
@@ -59,16 +60,17 @@ export function landingPage() {
 
   <section class="demo" aria-label="Example of a flagged post">
     <article class="post demo-post">
-      <div class="post-meta"><span class="when">Fri 14 Nov · 09:30</span><span class="badge">queue slot</span><span class="svc">X</span></div>
-      <p class="post-text">Our spring sale ends <mark class="hl hl-high">tomorrow</mark>! <mark class="hl hl-med">**Everything**</mark> is 30% off. Shop now: <mark class="hl hl-high">shop.example/sprng-sale</mark></p>
+      <div class="post-meta"><span class="when">Fri 13 Nov · 09:30</span><span class="badge">queue slot</span><span class="svc">X</span></div>
+      <p class="post-text">Our autumn sale ends <mark class="hl hl-med">tomorrow</mark>! <mark class="hl hl-med">**Everything**</mark> is 30% off. Shop now: <mark class="hl hl-high">shop.example/sprng-sale</mark></p>
       <ul class="flags">
         <li class="flag sev-high"><span class="dot" aria-hidden="true"></span><div><strong>Broken link (404 Not Found)</strong><p>Readers will land on an error page.</p></div></li>
-        <li class="flag sev-high"><span class="dot" aria-hidden="true"></span><div><strong>“tomorrow” in a post with no fixed time</strong><p>At the current queue slot it means Sat 15 Nov. The sale ends Fri.</p></div></li>
+        <li class="flag sev-med"><span class="dot" aria-hidden="true"></span><div><strong>“tomorrow” in a post with no fixed time</strong><p>Queue times move. At the current slot “tomorrow” means Sat 14 Nov.</p></div></li>
         <li class="flag sev-med"><span class="dot" aria-hidden="true"></span><div><strong>Markdown bold will show as asterisks</strong><p>X does not render **bold**.</p></div></li>
       </ul>
       <div class="fix-row"><span class="btn btn-small" aria-hidden="true">Clean up formatting</span><span class="btn btn-small btn-quiet" aria-hidden="true">Move to drafts</span></div>
     </article>
   </section>
+  </div>
 
   <section class="checks">
     <h2>What it looks for</h2>

@@ -58,7 +58,7 @@ export async function gql(token, query, variables, deps) {
   let res;
   try {
     res = await f(API, {
-      method: 'POST', signal: ctl.signal,
+      method: 'POST', signal: ctl.signal, redirect: 'manual',
       headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', accept: 'application/json', 'user-agent': 'LastLook/1.0 (+https://lastlook.swiftbotlab.workers.dev/about)' },
       body: JSON.stringify({ query, variables: variables || {} })
     });
@@ -68,6 +68,8 @@ export async function gql(token, query, variables, deps) {
   }
   try {
     const rate = parseRate(res.headers);
+    /* never follow a redirect with the user's token (Workers support only 'follow' and 'manual') */
+    if (res.status >= 300 && res.status < 400) throw new BufferError('upstream', 'Buffer redirected the request', { rate });
     if (res.status === 401 || res.status === 403) throw new BufferError('auth', 'Your Buffer connection has expired or was revoked', { rate });
     if (res.status === 429) {
       const ra = Number(res.headers.get('retry-after'));

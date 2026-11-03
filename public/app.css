@@ -64,6 +64,7 @@ main{width:100%;max-width:1040px;margin:0 auto;padding:8px 16px 48px}
 .trust{list-style:none;padding:0;margin:22px 0 0;display:flex;flex-wrap:wrap;gap:8px 18px;color:var(--muted);font-size:14px}
 .trust li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:6px}
 .demo{margin:32px 0 8px;max-width:640px}
+@media (min-width:1000px){.hero-wrap{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:44px;align-items:center}.hero-wrap .demo{margin:28px 0 0}.hero h1{font-size:46px}}
 .demo-post{transform:rotate(-.4deg)}
 .checks h2,.fixes h2{font-size:24px;margin:44px 0 14px}
 .grid{display:grid;grid-template-columns:1fr;gap:12px}
