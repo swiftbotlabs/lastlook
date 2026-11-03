@@ -37,8 +37,11 @@ test('shape: private and special addresses are refused without any network', () 
   assert.throws(() => checkShape('https://user:pw@example.org/'), (e) => e.kind === 'credentials');
   assert.throws(() => checkShape('http://example.org:22/'), (e) => e.kind === 'port');
   assert.throws(() => checkShape('https://lastlook.swiftbotlab.workers.dev/api/scan', 'lastlook.swiftbotlab.workers.dev'), (e) => e.kind === 'self');
-  assert.equal(checkShape('https://8.8.8.8/').ip, true);
+  /* public IP literals are not fetched either, only flagged */
+  for (const u of ['https://8.8.8.8/', 'http://[2001:4860:4860::8888]/', 'http://@1.1.1.1/', 'http://①⑨④。②⑤④。①⑥⑨。②⑤④/']) assert.throws(() => checkShape(u), (e) => e.kind === 'ip', u);
+  assert.throws(() => checkShape('http://localhost../'), (e) => e instanceof Refused);
   assert.equal(checkShape('https://buffer.com:443/x').host, 'buffer.com');
+  assert.equal(checkShape('https://buffer.com./x').host, 'buffer.com');
 });
 
 test('SSRF positive control: a public name is fetched, the same name pointing at 127.0.0.1 is not', async () => {
@@ -86,13 +89,21 @@ test('link results: 404, HEAD refused then GET ok, NXDOMAIN, timeout, loops', as
   let h = harness(dns, { 'https://site.example.net/missing': { status: 404 } });
   let r = await checkLink('https://site.example.net/missing', h.deps);
   assert.deepEqual([r.kind, r.status], ['http', 404]);
-  assert.deepEqual(h.calls.map((c) => c.method), ['HEAD', 'GET']);
+  assert.deepEqual(h.calls.map((c) => c.method), ['HEAD'], 'no GET after a 404');
   assert.equal(linkFlag(r).id, 'links.not_found');
 
-  h = harness(dns, (url, init) => (init.method === 'HEAD' ? { status: 405 } : { status: 200 }));
-  r = await checkLink('https://site.example.net/ok', h.deps);
-  assert.equal(r.status, 200);
-  assert.equal(linkFlag(r), null);
+  for (const code of [403, 500, 503]) {
+    h = harness(dns, () => ({ status: code }));
+    await checkLink('https://site.example.net/x' + code, h.deps);
+    assert.deepEqual(h.calls.map((c) => c.method), ['HEAD'], 'no GET after ' + code);
+  }
+  for (const code of [405, 501]) {
+    h = harness(dns, (url, init) => (init.method === 'HEAD' ? { status: code } : { status: 200 }));
+    r = await checkLink('https://site.example.net/ok' + code, h.deps);
+    assert.equal(r.status, 200);
+    assert.deepEqual(h.calls.map((c) => c.method), ['HEAD', 'GET'], 'GET only after ' + code);
+    assert.equal(linkFlag(r), null);
+  }
 
   h = harness({}, {});
   r = await checkLink('https://nope.example.net/', h.deps);
@@ -108,7 +119,18 @@ test('link results: 404, HEAD refused then GET ok, NXDOMAIN, timeout, loops', as
   h = harness(dns, (url) => ({ status: 302, location: url + 'x' }));
   r = await checkLink('https://site.example.net/a', h.deps);
   assert.equal(r.kind, 'too_many_redirects');
-  assert.equal(linkFlag(r).id, 'links.redirect_loop');
+  assert.equal(h.calls.length, 4, 'first request + 3 redirects, then stop');
+  assert.equal(linkFlag(r).id, 'links.redirects');
+
+  h = harness(dns, { 'https://site.example.net/1': { status: 301, location: '/2' }, 'https://site.example.net/2': { status: 301, location: '/3' }, 'https://site.example.net/3': { status: 301, location: '/4' } });
+  r = await checkLink('https://site.example.net/1', h.deps);
+  assert.deepEqual([r.kind, r.status, r.hops.length], ['http', 200, 3], 'three redirects are still followed');
+
+  h = harness(dns, { 'https://site.example.net/to-ip': { status: 302, location: 'http://93.184.215.14/' } });
+  r = await checkLink('https://site.example.net/to-ip', h.deps);
+  assert.equal(r.refused, 'ip', 'a redirect to a bare IP is not followed');
+  assert.equal(h.calls.length, 1);
+  assert.equal(linkFlag({ url: 'http://8.8.8.8/', kind: 'refused', refused: 'ip', reason: 'x', hops: [] }).id, 'links.ip');
 });
 
 test('link flags: blocked checker is low, short links and off-site redirects are notes, 5xx is medium', () => {

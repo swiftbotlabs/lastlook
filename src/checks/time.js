@@ -1,7 +1,7 @@
 /* Check 2: time words that will be wrong when the post goes out.
    Everything is judged at the post's send time (dueAt) in the channel's time zone (Buffer's channel.timezone,
    "Default if not set is Europe/London"). */
-import { maskUrls } from './text.js';
+import { maskUrls, clipForChecks } from './text.js';
 
 export const DEFAULT_TZ = 'Europe/London';
 const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -237,7 +237,7 @@ export function checkTime(post, channel, now) {
   const flags = [];
   const items = post.thread && post.thread.length > 1 ? post.thread.map((t, i) => ({ text: t.text, where: 'thread:' + i })) : [{ text: post.text, where: 'text' }];
   for (const it of items) {
-    const text = String(it.text || '');
+    const text = clipForChecks(it.text);
     const masked = maskUrls(text);
     const dates = findDates(text, send);
     const rels = findRelative(text);

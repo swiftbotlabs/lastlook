@@ -1,0 +1,16 @@
+{
+  "name": "lastlook",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Last Look: a last look at your Buffer queue before it posts.",
+  "type": "module",
+  "scripts": {
+    "build": "ops/build.sh",
+    "test": "ops/build.sh && node --test test/*.test.mjs",
+    "deploy": "ops/build.sh && node --test test/*.test.mjs && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.1"
+  },
+  "license": "UNLICENSED"
+}

@@ -144,29 +144,45 @@ export function privacyPage() {
   return shell('Privacy · Last Look', `
 <main id="main" class="prose">
   <h1>Privacy</h1>
-  <p class="lead">Last Look is a tool by Swift Bot Labs that checks the posts waiting in your Buffer queue. This page says exactly what it reads, what it keeps and for how long.</p>
+  <p class="lead">Last Look is a tool by Swift Bot Labs that checks the posts waiting in your Buffer queue. This page says exactly what it reads, what it keeps, for how long, and what it logs.</p>
+
   <h2>What Last Look asks Buffer for</h2>
   <ul>
-    <li><strong>account:read</strong>: your organizations and channels (names, network, time zone, avatar), so posts can be judged per channel.</li>
+    <li><strong>account:read</strong>: your account id and display name, and your organizations and channels (name, network, time zone, avatar), so posts can be judged per channel.</li>
     <li><strong>posts:read</strong>: your scheduled posts, posts awaiting approval and drafts: text, scheduled time, attached media type and alt text, link previews and first comments.</li>
-    <li><strong>posts:write</strong>: used only when you press a fix button and then confirm. It edits that post’s text, moves it to drafts or moves it in the queue. Last Look never creates, publishes or deletes posts.</li>
+    <li><strong>posts:write</strong>: used only when you press a fix button and then confirm. It edits that one post’s text, moves it to drafts, or moves it to the front or end of its queue. Last Look never creates, publishes or deletes posts.</li>
   </ul>
-  <h2>What is stored</h2>
+
+  <h2>Where the checks run</h2>
+  <p>Our server fetches your queue from Buffer and passes it straight to your browser. The checks themselves run in your browser tab. The server does not keep the posts after answering.</p>
+
+  <h2>What is stored, and for how long</h2>
   <ul>
-    <li>A session record holding your Buffer access token, its expiry, a security token for your browser and your organization ids. It is encrypted (AES-256-GCM) with a key that needs both our server secret and the random session id in your browser cookie.</li>
-    <li>It lives for at most one hour, matching Buffer’s access token, and is deleted the moment you press <strong>Disconnect</strong>.</li>
-    <li>Your browser gets one cookie with the session id (HttpOnly, Secure, SameSite=Lax). During sign-in a second short-lived cookie (10 minutes) holds the one-time sign-in values.</li>
+    <li><strong>Your session</strong> (encrypted with AES-256-GCM, under a key that needs both our server secret and the random session id held only in your browser’s cookie): your Buffer access token and its expiry, a security token for your browser, a one-way hash of your Buffer account id, your organizations’ ids and names (up to five), your Buffer display name, whether Buffer granted editing, and when the session started. It lives at most one hour, matching Buffer’s access token.</li>
+    <li><strong>Usage counters</strong>, stored under the one-way hash of your account id: a hash of your current session id, the time of your last scan, and today’s number of scans, fixes, link checks and sign-ins. They contain no content and reset every day (UTC); they let us limit use so the app stays available to everyone.</li>
+    <li><strong>For one minute only</strong>: a hash of each link we checked for you (so the same link is not fetched twice within a minute) and, per linked website (for example “example.com”), how many checks it received in that minute across all users.</li>
+    <li><strong>App-wide</strong>: how many requests Buffer still allows this app, read from Buffer’s replies.</li>
+    <li><strong>In your browser</strong>: one cookie with the session id (HttpOnly, Secure, SameSite=Lax). During sign-in a second cookie lives for at most 10 minutes with one-time sign-in values.</li>
   </ul>
+
   <h2>What is not stored</h2>
   <ul>
-    <li>Post text, media, links and check results exist only while a request is answered and in your open browser tab. Nothing is written to a database, a log or an analytics tool.</li>
-    <li>No tracking, no ads, no third-party scripts. The page loads only from this site; channel avatars load from Buffer’s image host.</li>
-    <li>Operational logs record events such as “connected” or “fix applied” with no post text, no links and no account details.</li>
+    <li>Post text, media, links in readable form, and check results are not written to any database, file or log.</li>
+    <li>No tracking, no ads, no third-party scripts. The page loads only from this site. Channel avatars load in your browser from Buffer’s image hosts (buffer-channel-avatars-bucket.s3.amazonaws.com, *.buffer.com, *.bufferapp.com); avatars hosted anywhere else are not shown.</li>
   </ul>
-  <h2>Links in your posts</h2>
-  <p>To check a link, Last Look’s server asks a public DNS resolver (Cloudflare) for the link’s address and then requests the page once, the way a reader’s browser would, identifying itself as “LastLook”. Only the status (for example 200 or 404) and where it redirected are used. Links to private or internal addresses are never opened.</p>
+
+  <h2>Logs</h2>
+  <p>Request logging on Cloudflare (Workers Logs and invocation logs) is switched off for Last Look, so no request URLs, IP addresses or headers are kept by us. Our code writes short event lines such as “connected”, “fix applied” or “disconnected”, with no ids, text, links or tokens; with logging off they are not stored and can only be watched live by the operator. Cloudflare still keeps aggregate counts (requests, errors, CPU time) for the service.</p>
+
+  <h2>How links in your posts are checked</h2>
+  <p>Our server looks the link’s domain up with Cloudflare’s public DNS resolver, then sends one HEAD request, identifying itself as “LastLook”. Only if the site answers that it does not support HEAD (405 or 501) does it send one GET request, and the response body is never read. It follows at most three redirects, checking each one the same way. Only the status (for example 200 or 404) and where it redirected are used. Links to private or internal addresses, and links written as bare IP addresses, are never opened. Each link is checked at most once a minute for your account, up to 300 checks a day.</p>
+
   <h2>Disconnecting</h2>
-  <p>Press <strong>Disconnect</strong> in the app to delete the session and token at once. You can also remove Last Look from the connected apps in your Buffer account settings, which revokes its access on Buffer’s side.</p>
+  <p>Press <strong>Disconnect</strong> to delete your session and its Buffer token from our store and unregister it at once. From that moment the session is refused, even though a cached copy of the deleted record can linger in Cloudflare’s storage for up to about a minute. Signing in again also ends any older Last Look session of the same Buffer account. To revoke Last Look’s access on Buffer’s side, remove it from the connected apps in your Buffer account settings.</p>
+
+  <h2>Limits</h2>
+  <p>To keep Last Look available for everyone: one scan a minute, 20 scans and 40 fixes a day per account, and new scans pause when Buffer’s request allowance for this app runs low.</p>
+
   <h2>Who runs it</h2>
   <p>Swift Bot Labs, contact <a href="mailto:swiftbotlabs@gmail.com">swiftbotlabs@gmail.com</a>. Last Look runs on Cloudflare Workers. It is not made by or affiliated with Buffer.</p>
   <p class="muted">Last updated 3 November 2026.</p>
@@ -181,21 +197,21 @@ export function aboutPage() {
   <h2>1. Connect</h2>
   <p>You sign in with Buffer (OAuth with PKCE). Last Look gets a token that lasts about an hour. It can read your queue, and it can change a post only when you press a fix and confirm it.</p>
   <h2>2. Scan</h2>
-  <p>Last Look reads every scheduled post, post awaiting approval and draft across your channels in one or two requests, then runs its checks in plain code. There is no AI model involved: every flag comes from a rule you can read below, so the same post always gets the same answer.</p>
+  <p>Last Look reads every scheduled post, post awaiting approval and draft across your channels in one to three requests, and your browser runs the checks in plain code. There is no AI model involved: every flag comes from a rule you can read below, so the same post always gets the same answer.</p>
   <h2>3. The checks</h2>
   <ul>
-    <li><strong>Links.</strong> Each link is opened once (a HEAD request, then GET if the site refuses HEAD), following up to five redirects. Flags: 404 and 410, other 4xx errors, 5xx errors, no answer within 8 seconds, domains that do not exist, redirect loops, links that land on a sign-in page or on a different site, and links to private addresses such as localhost.</li>
+    <li><strong>Links.</strong> Each link gets one HEAD request (one GET only if the site says it does not support HEAD), following up to three redirects. Flags: 404 and 410, other 4xx errors, 5xx errors, no answer within 8 seconds, domains that do not exist, more than three redirects, links that land on a sign-in page or on a different site, links to private addresses such as localhost, and links written as bare IP addresses (noted, not opened).</li>
     <li><strong>Time.</strong> Everything is judged at the scheduled send time in the channel’s time zone. Flags: written dates that will already be past (and whether they were still ahead when you wrote the post), a weekday that does not match its date, “today at 7pm” going out at 9pm, “Good morning” at night, “Happy Friday” or #ThrowbackThursday on the wrong day, holiday greetings out of season, and day words such as “tomorrow” in posts that sit in a queue slot, where the send time can move.</li>
     <li><strong>Formatting.</strong> **bold**, __bold__, ~~strike~~, # headings, [text](link), backticks, HTML tags and HTML codes such as &amp;amp;, on networks that show them as typed (X, Bluesky, LinkedIn, Threads, Mastodon, Facebook, Instagram, TikTok, Pinterest, YouTube, Google Business Profile). The fix suggests a clean version.</li>
     <li><strong>Length.</strong> Each network’s limit, counted the way that network counts, following Buffer’s published character limits: X 280 (25,000 on paid plans) with links as 23 and emoji as 2, Bluesky 300 counted as visible characters with links shortened, LinkedIn 3,000 with links as 24, Threads 500, Instagram 2,196 with line breaks as 2, Mastodon your server’s limit, and the rest.</li>
-    <li><strong>Repeats.</strong> The same text, or text at least 80% alike, queued twice on one channel; and identical text on other channels at different times.</li>
+    <li><strong>Repeats.</strong> The same text, or text at least 80% alike, queued twice on one channel; and identical text on other channels at different times. On very large queues the near-match comparison stops early and says so.</li>
     <li><strong>Leftovers.</strong> Template placeholders ([link], {{first_name}}, TODO), images without alt text, hashtags cut short by a hyphen or apostrophe, a space after @ or #, unmatched brackets, too many hashtags, and posts landing between 1 and 5 a.m.</li>
   </ul>
   <h2>4. Fix</h2>
-  <p>Each flag offers the fixes that make sense for it: edit the text (with a suggested version where one can be made, a live character count and a word-by-word view of the change), move the post to drafts, or move a queue post to the top or bottom of its queue. Nothing is saved until you confirm. Before saving, Last Look reads the post again and stops if it changed in Buffer since your scan, or if it goes out in the next three minutes. Threads are left to Buffer’s editor so every part stays in step. Last Look never deletes a post.</p>
+  <p>Each flag offers the fixes that make sense for it: edit the text (with a suggested version where one can be made, a live character count and a word-by-word view of the change), move the post to drafts, or move a queue post to the top or bottom of its queue. Nothing is saved until you confirm. Before saving, Last Look reads the post again and stops if it changed in Buffer since your scan, or if it goes out in the next three minutes. Threads are left to Buffer’s editor so every part stays in step. After a fix, that one post is updated on the page from Buffer’s answer and checked again; nothing else is re-read. Last Look never deletes a post.</p>
   <h2>Limits</h2>
   <ul>
-    <li>Up to 300 queued posts per organization per scan.</li>
+    <li>Up to 300 queued posts per scan (three requests to Buffer), one scan a minute, 20 scans and 40 fixes a day per account.</li>
     <li>Some sites block automated visitors; those links are marked as “probably fine, open it once” rather than broken.</li>
     <li>Day words are a judgment call. When a post has its own fixed time, Last Look only notes what “tomorrow” will mean, it does not call it wrong.</li>
   </ul>

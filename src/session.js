@@ -73,6 +73,11 @@ export async function hmac(env, info, data) {
   const key = await deriveKey(env, 'lastlook-hmac', info, 'hmac');
   return b64url(new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(String(data)))));
 }
+/* derive once, sign many (scan tokens for hundreds of posts and links) */
+export async function signer(env, info) {
+  const key = await deriveKey(env, 'lastlook-hmac', info, 'hmac');
+  return async (data) => b64url(new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(String(data))))).slice(0, 32);
+}
 
 /* ---------- cookies ---------- */
 export function parseCookies(request) {
@@ -94,26 +99,33 @@ export const clearCookie = (name) => setCookie(name, '', 0);
 
 /* ---------- session store ---------- */
 const INFO = 'lastlook-session-v1';
-const kvKey = async (sid) => 's:' + await sha256hex(sid);
+/* session key (sk) = SHA-256 of the session id: names the KV record and is what the gate stores */
+export const sessionKey = (sid) => sha256hex(sid);
 
 export async function createSession(env, data, ttl) {
   const sid = randomToken(32);
   const life = Math.max(120, Math.min(MAX_TTL, Math.floor(ttl || MAX_TTL)));
   const record = Object.assign({}, data, { csrf: randomToken(24), created: Date.now(), exp: Date.now() + life * 1000 });
   const sealed = await sealJSON(env, sid, INFO, record);
-  await env.SESSIONS.put(await kvKey(sid), sealed, { expirationTtl: Math.max(60, life) });
-  return { sid, record, life };
+  const sk = await sessionKey(sid);
+  await env.SESSIONS.put('s:' + sk, sealed, { expirationTtl: Math.max(60, life) });
+  return { sid, sk, record, life };
 }
 export async function readSession(env, request) {
   const sid = parseCookies(request)[SESSION_COOKIE];
   if (!sid || !/^[A-Za-z0-9_-]{43}$/.test(sid)) return null;
-  const sealed = await env.SESSIONS.get(await kvKey(sid));
+  const sk = await sessionKey(sid);
+  const sealed = await env.SESSIONS.get('s:' + sk);
   if (!sealed) return null;
   const record = await openJSON(env, sid, INFO, sealed);
   if (!record || typeof record.at !== 'string' || !(record.exp > Date.now())) return null;
-  return { sid, record };
+  return { sid, sk, record };
 }
 export async function deleteSession(env, sid) {
   if (!sid) return;
-  await env.SESSIONS.delete(await kvKey(sid));
+  await env.SESSIONS.delete('s:' + await sessionKey(sid));
+}
+export async function deleteSessionByKey(env, sk) {
+  if (!sk || !/^[0-9a-f]{64}$/.test(sk)) return;
+  await env.SESSIONS.delete('s:' + sk);
 }

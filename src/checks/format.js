@@ -3,11 +3,12 @@
    X, Bluesky, LinkedIn, Threads, Mastodon (stock servers post plain text), Facebook, Instagram, TikTok,
    Pinterest, YouTube descriptions and Google Business Profile posts. Substack and WhatsApp have their own
    formatting, so they are skipped. */
-import { maskUrls, findUrls, clip } from './text.js';
+import { maskUrls, findUrls, clip, clipForChecks } from './text.js';
 import { SERVICE_NAMES } from './length.js';
 
 export const RAW_SERVICES = new Set(['twitter', 'bluesky', 'linkedin', 'threads', 'mastodon', 'facebook', 'instagram', 'tiktok', 'pinterest', 'youtube', 'googlebusiness']);
 
+const HREF_RE = /\bhref=["']?([^"'\s>]{1,2000})/i;
 const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', hellip: '…', mdash: '—', ndash: '–', rsquo: '’', lsquo: '‘', rdquo: '”', ldquo: '“', copy: '©', reg: '®', trade: '™' };
 
 /* each rule: find(masked, original) -> [{start, end}] ; fix(text) -> text */
@@ -45,8 +46,12 @@ const RULES = [
   {
     id: 'format.html_tag', title: 'HTML tags will show as raw text',
     explain: (svc) => svc + ' shows HTML tags such as <b> or <br> exactly as typed. They often come from pasting out of a blog or CMS.',
-    re: /<\/?(?:b|i|u|em|strong|br|p|span|div|ul|ol|li|h[1-6]|small|mark|sup|sub)\b[^<>\n]{0,200}\/?>|<a\s[^<>\n]{0,500}href=["']?([^"'\s>]+)["']?[^<>\n]{0,200}>([^<\n]{0,300})<\/a>/gi, useOriginal: true,
-    replace: (m, href, label) => {
+    /* the <a> branch matches the whole tag in one linear step and reads href afterwards: the earlier pattern
+       with an optional quote around a greedy href backtracked badly on crafted input */
+    re: /<\/?(?:b|i|u|em|strong|br|p|span|div|ul|ol|li|h[1-6]|small|mark|sup|sub)\b[^<>\n]{0,200}\/?>|<a\s([^<>\n]{0,700})>([^<\n]{0,300})<\/a>/gi, useOriginal: true,
+    replace: (m, attrs, label) => {
+      const href = attrs != null ? (attrs.match(HREF_RE) || [])[1] : null;
+      if (attrs != null && !href) return (label || '').trim();
       if (href) return (label || '').trim() ? label.trim() + ': ' + href : href;
       if (/^<br/i.test(m)) return '\n';
       if (/^<\/(p|div|li|h[1-6])/i.test(m)) return '\n';
@@ -72,10 +77,11 @@ const RULES = [
   }
 ];
 
-/* run every rule; spans index the original text */
+/* run every rule once; spans index the (capped) text */
 export function findFormatting(text) {
-  const original = String(text || '');
+  const original = clipForChecks(text);
   const masked = maskUrls(original);
+  const urls = findUrls(original);
   const hits = [];
   for (const rule of RULES) {
     const source = rule.useOriginal ? original : masked;
@@ -87,7 +93,7 @@ export function findFormatting(text) {
       /* for rules that run on the original text, skip matches that start inside a plain URL
          (Markdown links are the exception: they contain a URL on purpose) */
       if (rule.useOriginal && rule.id !== 'format.md_link' && rule.id !== 'format.html_tag') {
-        const inside = findUrls(original).some((u) => m.index >= u.start && m.index < u.end);
+        const inside = urls.some((u) => m.index >= u.start && m.index < u.end);
         if (inside) continue;
       }
       hits.push({ rule, start: m.index, end: m.index + m[0].length, match: m });
@@ -102,10 +108,10 @@ export function findFormatting(text) {
   return kept;
 }
 
-/* the cleaned text, applying every replacement right to left */
-export function cleanFormatting(text) {
+/* the cleaned text, applying every replacement right to left (hits from findFormatting, so the patterns run once) */
+export function cleanFormatting(text, knownHits) {
   const original = String(text || '');
-  const hits = findFormatting(original);
+  const hits = knownHits || findFormatting(original);
   let out = original;
   for (let i = hits.length - 1; i >= 0; i--) {
     const h = hits[i];
@@ -132,7 +138,7 @@ export function checkFormatting(post, channel) {
     }
     const rules = Array.from(byRule.values()).map((list) => list[0].rule);
     const severity = rules.some((r) => (r.severity || 'medium') === 'medium') ? 'medium' : 'low';
-    const fixed = cleanFormatting(it.text);
+    const fixed = cleanFormatting(it.text, hits);
     const examples = hits.slice(0, 4).map((h) => '"' + clip(String(it.text).slice(h.start, h.end).trim() || String(it.text).slice(h.start, h.end), 32) + '"').join(', ');
     const single = rules.length === 1;
     flags.push({

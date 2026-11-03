@@ -1,6 +1,8 @@
-/* Last Look app. Builds the queue view from /api/scan with DOM nodes and textContent only:
-   post text is third-party content and is never parsed as HTML. */
+/* Last Look app. The server reads the queue (/api/scan); the checks run here in the browser, on the same code
+   the server tests. The view is built with DOM nodes and textContent only: post text is third-party content and
+   is never parsed as HTML. After a fix, only that post is updated from Buffer's answer; nothing is rescanned. */
 import { lengthFor, limitFor, SERVICE_NAMES } from './checks/length.js';
+import { runAll } from './checks/index.js';
 
 const $ = (id) => document.getElementById(id);
 const meta = (n) => { if (typeof document === 'undefined') return ''; const m = document.querySelector('meta[name="' + n + '"]'); return m ? m.getAttribute('content') : ''; };
@@ -11,7 +13,15 @@ const SEV_CLASS = { high: 'sev-high', medium: 'sev-med', low: 'sev-low' };
 const SEV_WORD = { high: 'Fix before it posts', medium: 'Worth a look', low: 'Note' };
 const LINK_TTL = 10 * 60 * 1000;
 
-const state = { data: null, filter: 'flagged', notes: false, links: new Map(), linkQueue: [], linkRunning: false, busy: false, dialog: null };
+const SCAN_GAP_MS = 60000;
+const state = { raw: null, data: null, filter: 'flagged', notes: false, links: new Map(), linkQueue: [], linkRunning: false, busy: false, dialog: null, nextScanAt: 0 };
+
+/* run the checks on the current raw scan (after a scan, and after each fix) */
+function recompute() {
+  if (!state.raw) { state.data = null; return; }
+  const res = runAll(state.raw.channels, state.raw.posts, new Date());
+  state.data = Object.assign({}, state.raw, { posts: res.posts, meta: res.meta });
+}
 
 /* ---------- helpers ---------- */
 function el(tag, attrs, ...kids) {
@@ -36,6 +46,7 @@ async function api(path, body) {
   if (!r.ok || !j || j.ok === false) {
     const err = new Error((j && j.message) || 'Something went wrong (' + r.status + ').');
     err.status = r.status; err.code = j && j.error;
+    err.retryAfter = Number(r.headers.get('retry-after')) || 0;
     throw err;
   }
   return j;
@@ -145,6 +156,7 @@ function render() {
     $('subline').textContent = plural(live.length, 'queued post') + (drafts ? ' and ' + plural(drafts, 'draft') : '') + ' across ' + plural(d.channels.length, 'channel') + (highCount ? ' · ' + plural(highCount, 'problem') + ' to fix before posting' : '') + '.';
   }
   if (d.truncated) q.append(el('div', { class: 'banner warn' }, 'Your queue is large, so this scan stopped at the first posts. Scan again after fixing these to see the rest.'));
+  if (d.meta && d.meta.repeatsPartial) q.append(el('div', { class: 'banner warn' }, 'Your queue is large, so repeated posts were only partly checked.'));
   if (d.rateLow) q.append(el('div', { class: 'banner warn' }, 'Buffer’s request allowance for Last Look is nearly used up for now, so scans may pause for a while.'));
   if (!d.channels.length || !posts.length) {
     q.append(el('div', { class: 'empty' }, el('h2', { text: !d.channels.length ? 'No channels connected in Buffer' : 'Your queue is empty' }),
@@ -322,13 +334,15 @@ async function confirmDialog() {
   btn.textContent = 'Saving…';
   $('dlg-error').hidden = true;
   try {
-    const body = { postId: cfg.post.id, action: cfg.action, confirm: true, expectedHash: await sha256hex(cfg.post.text || '') };
+    const raw = state.raw && state.raw.posts.find((x) => x.id === cfg.post.id);
+    if (!raw) throw new Error('Scan again before changing this post.');
+    const body = { postId: raw.id, action: cfg.action, confirm: true, expectedHash: await sha256hex(raw.text || ''), ts: raw.pts, ptok: raw.ptok };
     if (cfg.action === 'edit') body.text = $('dlg-text').value;
     if (cfg.action === 'move') body.position = cfg.position;
-    await api('/api/fix', body);
+    const res = await api('/api/fix', body);
     closeDialog();
+    applyFixResult(res);
     toast(cfg.action === 'edit' ? 'Saved to Buffer.' : cfg.action === 'draft' ? 'Moved to drafts.' : 'Moved in the queue.');
-    await doScan(true);
   } catch (e) {
     if (e.status === 401) { closeDialog(); return sessionEnded(); }
     $('dlg-error').textContent = e.message;
@@ -338,38 +352,60 @@ async function confirmDialog() {
   }
 }
 
+/* replace the one post with Buffer's answer and re-run the checks locally */
+function applyFixResult(res) {
+  if (!state.raw || !res || !res.post) return;
+  const i = state.raw.posts.findIndex((x) => x.id === res.post.id);
+  const updated = Object.assign({}, res.post, { pts: res.ts });
+  if (i >= 0) state.raw.posts[i] = updated; else state.raw.posts.push(updated);
+  for (const l of res.links || []) if (!state.links.has(l.url)) state.linkQueue.push({ url: l.url, sig: l.sig, ts: res.ts });
+  recompute();
+  render();
+  runLinks();
+}
+
 /* ---------- scanning and link checks ---------- */
 function sessionEnded() {
-  state.data = null;
+  state.data = null; state.raw = null;
   $('headline').textContent = 'Your session ended';
   $('subline').textContent = 'Sessions last an hour at most. Connect again to keep going.';
   $('rescan').disabled = true;
   $('queue').replaceChildren(el('div', { class: 'empty' }, el('h2', { text: 'Connect again' }), el('p', { text: 'Nothing was changed. Your posts are safe in Buffer.' }), el('a', { class: 'btn btn-primary', href: '/oauth/start' }, 'Connect Buffer')));
 }
 async function doScan(quiet) {
-  if (state.busy) return;
+  if (state.busy || Date.now() < state.nextScanAt) return;
   state.busy = true;
   $('rescan').disabled = true;
   $('rescan').textContent = 'Scanning…';
   if (!quiet && !state.data) $('subline').textContent = 'Reading your queue from Buffer…';
   try {
     const d = await api('/api/scan', {});
-    state.data = d;
+    for (const p of d.posts) p.pts = d.ts;
+    state.raw = d;
+    state.nextScanAt = Date.now() + SCAN_GAP_MS;
+    recompute();
     const now = Date.now();
     for (const [u, r] of state.links) if (now - r.at > LINK_TTL) state.links.delete(u);
-    state.linkQueue = d.links.filter((l) => !state.links.has(l.url));
+    state.linkQueue = d.links.filter((l) => !state.links.has(l.url)).map((l) => ({ url: l.url, sig: l.sig, ts: d.ts }));
     render();
     runLinks();
   } catch (e) {
     if (e.status === 401) return sessionEnded();
+    if (e.retryAfter) state.nextScanAt = Date.now() + Math.min(e.retryAfter, 3600) * 1000;
     const q = $('queue');
     if (!state.data) { $('headline').textContent = 'Could not read your queue'; $('subline').textContent = ''; q.replaceChildren(); }
     q.prepend(el('div', { class: 'banner err', role: 'alert' }, e.message));
   } finally {
     state.busy = false;
-    $('rescan').disabled = false;
-    $('rescan').textContent = 'Scan again';
+    scanButton();
   }
+}
+/* the server allows one scan a minute: the button counts down instead of failing */
+function scanButton() {
+  const b = $('rescan');
+  if (state.busy) return;
+  const left = Math.ceil((state.nextScanAt - Date.now()) / 1000);
+  if (left > 0) { b.disabled = true; b.textContent = 'Scan again in ' + left + ' s'; } else { b.disabled = false; b.textContent = 'Scan again'; }
 }
 async function runLinks() {
   if (state.linkRunning) return;
@@ -380,15 +416,28 @@ async function runLinks() {
   try {
     while (state.linkQueue.length) {
       status.textContent = 'Checking links ' + done + ' of ' + total + '…';
-      const batch = state.linkQueue.splice(0, 6);
+      /* one batch = up to 6 links from the same scan (they share its timestamp) */
+      const ts = state.linkQueue[0].ts;
+      const batch = [];
+      for (let i = 0; i < state.linkQueue.length && batch.length < 6;) {
+        if (state.linkQueue[i].ts === ts) batch.push(state.linkQueue.splice(i, 1)[0]); else i++;
+      }
       let res;
-      try { res = await api('/api/links', { items: batch }); } catch (e) {
+      try { res = await api('/api/links', { ts, items: batch.map((b) => ({ url: b.url, sig: b.sig })) }); } catch (e) {
         if (e.status === 401) return sessionEnded();
-        if (e.status === 429) { state.linkQueue.unshift(...batch); await new Promise((r) => setTimeout(r, 8000)); continue; }
-        for (const b of batch) state.links.set(b.url, { at: Date.now(), flag: { check: 'links', id: 'links.unchecked', severity: 'low', title: 'Link not checked', detail: b.url.slice(0, 120) + ': ' + e.message, fixes: [] } });
+        if (e.status === 429 && (e.retryAfter || 10) <= 60 && !batch.retried) { batch.retried = true; state.linkQueue.unshift(...batch); await new Promise((r) => setTimeout(r, Math.max(5, e.retryAfter || 10) * 1000)); continue; }
+        for (const b of batch) state.links.set(b.url, { at: Date.now(), flag: unchecked(b.url, e.status === 410 ? 'the check expired; scan again to check it' : e.message) });
         done += batch.length; continue;
       }
-      for (const r of res.results) state.links.set(r.url, { at: Date.now(), flag: r.flag || null, kind: r.kind, status: r.status });
+      for (const r of res.results) {
+        if (r.skipped) {
+          if (state.links.has(r.url)) continue;
+          const why = { recent: 'it was checked less than a minute ago; check again later', site: 'that site has had many checks in the last minute; scan again later', budget: 'today’s link-check limit for your account is reached' }[r.skipped] || 'it was not checked';
+          state.links.set(r.url, { at: Date.now(), flag: unchecked(r.url, why) });
+          continue;
+        }
+        state.links.set(r.url, { at: Date.now(), flag: r.flag || null, kind: r.kind, status: r.status });
+      }
       done += batch.length;
       render();
     }
@@ -398,6 +447,10 @@ async function runLinks() {
     state.linkRunning = false;
     render();
   }
+}
+
+function unchecked(url, why) {
+  return { check: 'links', id: 'links.unchecked', severity: 'low', title: 'Link not checked', detail: String(url).slice(0, 120) + ': ' + why + '.', fixes: [] };
 }
 
 /* ---------- wiring ---------- */
@@ -432,6 +485,7 @@ function init() {
   });
   sessionClock();
   setInterval(sessionClock, 30000);
+  setInterval(scanButton, 1000);
   doScan(false);
 }
 if (typeof document !== 'undefined' && document.getElementById('queue')) init();

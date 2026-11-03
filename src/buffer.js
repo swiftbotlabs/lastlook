@@ -124,7 +124,8 @@ export function scanQuery(withChannels) {
 }
 export const Q_POST = `query One($id: PostId!) { post(input: { id: $id }) { ${POST_FIELDS} } }`;
 
-const RESULT = '__typename ... on PostActionSuccess { post { id status dueAt text shareMode isCustomScheduled } } ... on MutationError { message }';
+/* the mutation result carries the whole post, so the page can update that one post without a new scan */
+const RESULT = '__typename ... on PostActionSuccess { post { ' + POST_FIELDS + ' } } ... on MutationError { message }';
 export const M_EDIT_TEXT = `mutation EditText($id: PostId!, $text: String!) { editPost(input: { id: $id, text: $text }) { ${RESULT} } }`;
 /* Buffer validates the edited post as a whole: an edit that sends only saveToDraft is refused with
    "Post must have either text or media", so the current text (re-read and hash-checked just before) is sent along. */
@@ -152,11 +153,23 @@ export function shapePost(n) {
     pinUrl: md.url ? String(md.url) : null
   };
 }
+/* channel avatars are shown only from Buffer's own image hosts (the page's CSP allows only these) */
+export const AVATAR_HOSTS = ['buffer-channel-avatars-bucket.s3.amazonaws.com'];
+export const AVATAR_SUFFIXES = ['.buffer.com', '.bufferapp.com'];
+export function avatarUrl(v) {
+  try {
+    const u = new URL(String(v || ''));
+    if (u.protocol !== 'https:' || u.username || u.password || u.port) return null;
+    const h = u.hostname.toLowerCase();
+    if (AVATAR_HOSTS.includes(h) || AVATAR_SUFFIXES.some((x) => h.endsWith(x))) return u.href.slice(0, 1000);
+  } catch (e) { /* not a URL */ }
+  return null;
+}
 export function shapeChannel(c) {
   const md = c.metadata || {};
   return {
     id: String(c.id), name: String(c.name || ''), displayName: c.displayName ? String(c.displayName) : null, service: String(c.service || ''),
-    type: String(c.type || ''), timezone: String(c.timezone || 'Europe/London'), avatar: /^https:\/\//.test(String(c.avatar || '')) ? String(c.avatar) : null,
+    type: String(c.type || ''), timezone: String(c.timezone || 'Europe/London'), avatar: avatarUrl(c.avatar),
     isQueuePaused: !!c.isQueuePaused, isDisconnected: !!c.isDisconnected, isLocked: !!c.isLocked,
     metadata: { maxCharacters: md.maxCharacters != null ? Number(md.maxCharacters) : null, subscriptionType: md.subscriptionType ? String(md.subscriptionType) : null }
   };

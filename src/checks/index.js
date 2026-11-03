@@ -5,7 +5,7 @@ import { checkFormatting } from './format.js';
 import { checkLength } from './length.js';
 import { checkDuplicates } from './dupes.js';
 import { checkPlaceholders, checkAltText, checkTags } from './extra.js';
-import { findUrls } from './text.js';
+import { findUrls, clipForChecks } from './text.js';
 
 export const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 };
 const LIVE = new Set(['scheduled', 'needs_approval']);
@@ -33,14 +33,17 @@ export function postLinks(post) {
     e.places.push({ where, start, end });
   };
   const items = post.thread && post.thread.length > 1 ? post.thread.map((t, i) => ({ text: t.text, where: 'thread:' + i })) : [{ text: post.text, where: 'text' }];
-  for (const it of items) for (const u of findUrls(it.text)) add(u.url, it.where, u.start, u.end);
+  for (const it of items) for (const u of findUrls(clipForChecks(it.text))) add(u.url, it.where, u.start, u.end);
   if (post.linkAttachment) add(post.linkAttachment, 'linkAttachment');
-  if (post.firstComment) for (const u of findUrls(post.firstComment)) add(u.url, 'firstComment', u.start, u.end);
+  if (post.firstComment) for (const u of findUrls(clipForChecks(post.firstComment))) add(u.url, 'firstComment', u.start, u.end);
   if (post.pinUrl) add(post.pinUrl, 'pinUrl');
   return out.slice(0, 25);
 }
 
-export function runChecks(channels, posts, now) {
+export function runChecks(channels, posts, now) { return runAll(channels, posts, now).posts; }
+
+/* returns {posts, meta}; meta.repeatsPartial is true when the duplicate check hit its work cap */
+export function runAll(channels, posts, now) {
   const chMap = new Map(channels.map((c) => [c.id, c]));
   const live = posts.filter((p) => LIVE.has(p.status));
   const dupes = checkDuplicates(live, chMap);
@@ -65,5 +68,5 @@ export function runChecks(channels, posts, now) {
     flags.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
     out.push(Object.assign({}, p, { flags, links: postLinks(p), allowed }));
   }
-  return out;
+  return { posts: out, meta: { repeatsPartial: !!(dupes.meta && dupes.meta.partial) } };
 }

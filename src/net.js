@@ -1,12 +1,13 @@
 /* Link checker with an SSRF guard.
    Rules for every hop (the first URL and every redirect):
    - http and https only, default ports (80, 443) plus 8080 and 8443, no user:password in the URL
-   - IP-literal hosts must be public unicast; internal-looking names (localhost, *.local, *.internal ...) are refused
+   - IP-literal hosts are never fetched: private ones are reported as private, public ones as "bare IP, not opened";
+     internal-looking names (localhost, *.local, *.internal ...) are refused
    - the hostname is resolved first with DNS-over-HTTPS (A and AAAA) and EVERY address must be public unicast,
      so names that point at 127.0.0.1, 10.x, 169.254.169.254 (cloud metadata), fc00::/7 etc. are refused
-   - redirects are followed by hand, at most 5, each one checked again
-   - HEAD first, GET only when HEAD is refused; no cookies, no caller headers; time cap per URL; the body is never
-     read beyond a few kilobytes and never returned
+   - redirects are followed by hand, at most 3, each one checked again
+   - HEAD first; one GET only when the server says HEAD is not supported (405 or 501); no cookies, no caller
+     headers; time cap per URL; response bodies are cancelled unread
    The Worker runtime adds its own layer (Workers cannot reach private networks), but the guard does not rely on it.
    Residual risk, documented in SECURITY.md: DNS can change between our lookup and the platform's (rebinding); the
    platform layer is what covers that window. */
@@ -27,12 +28,14 @@ export function checkShape(raw, selfHost) {
   if (u.username || u.password) throw new Refused('credentials', 'link contains a user name or password');
   if (!ALLOWED_PORTS.has(u.port)) throw new Refused('port', 'unusual port ' + u.port + ', not checked');
   if (u.href.length > MAX_URL) throw new Refused('too_long', 'link is longer than ' + MAX_URL + ' characters');
-  const host = u.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+  const host = u.hostname.replace(/^\[|\]$/g, '').replace(/\.+$/, '').toLowerCase();
+  if (!host || host.includes('..')) throw new Refused('invalid', 'not a valid host name');
   const ip = parseIP(host);
   if (ip) {
     const c = classify(ip);
     if (!c.global) throw new Refused('private', host + ' is a ' + c.scope + ' address');
-    return { url: u, host, ip: true };
+    /* public IP literals are not fetched either: they skip DNS-based protections on the target side */
+    throw new Refused('ip', host + ' is a bare IP address');
   }
   if (!host.includes('.') || BLOCKED_NAMES.test(host)) throw new Refused('private', host.slice(0, 80) + ' is not a public host name');
   if (selfHost && (host === selfHost || host.endsWith('.' + selfHost))) throw new Refused('self', 'links to this site are not fetched');
@@ -96,26 +99,24 @@ async function oneRequest(url, method, deps, msLeft) {
 }
 
 /* check one link. deps: {fetch, doh, spend(n), selfHost, timeoutMs}. Never throws; returns a result object */
+export const MAX_REDIRECTS = 3;
 export async function checkLink(raw, deps) {
   const t0 = Date.now();
   const timeout = deps.timeoutMs || 8000;
   const hops = [];
   let current = raw;
   try {
-    for (let hop = 0; hop <= 5; hop++) {
-      const { url, host, ip } = checkShape(current, deps.selfHost);
-      if (!ip) await resolvePublic(host, deps);
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const { url, host } = checkShape(current, deps.selfHost);
+      await resolvePublic(host, deps);
       const left = timeout - (Date.now() - t0);
       if (left <= 0) return result(raw, 'timeout', 0, url.href, hops, t0);
       let r = await oneRequest(url.href, 'HEAD', deps, left);
-      /* many servers refuse HEAD; ask again with GET before calling a link broken */
       if (r.status === 0 && r.error === 'timeout') return result(raw, 'timeout', 0, url.href, hops, t0);
-      if (r.status === 0 || r.status === 405 || r.status === 501 || r.status >= 400) {
+      /* GET only when the server says it does not support HEAD */
+      if (r.status === 405 || r.status === 501) {
         const left2 = timeout - (Date.now() - t0);
-        if (left2 > 300) {
-          const g = await oneRequest(url.href, 'GET', deps, left2);
-          if (g.status !== 0 || r.status === 0) r = g;
-        }
+        if (left2 > 300) r = await oneRequest(url.href, 'GET', deps, left2);
       }
       if (r.status === 0) return result(raw, r.error === 'timeout' ? 'timeout' : 'connect', 0, url.href, hops, t0);
       if (r.status >= 300 && r.status < 400 && r.location) {
@@ -156,12 +157,14 @@ export function linkFlag(res) {
   const fixes = [{ type: 'edit', label: 'Replace the link' }, { type: 'draft' }];
   if (res.kind === 'refused') {
     if (res.refused === 'private' || res.refused === 'credentials') return Object.assign(base, { id: 'links.private', severity: 'high', title: 'Link points to a private address', detail: shown + ': ' + res.reason + '. Your readers cannot open it; it only works on your own network.', fixes });
+    if (res.refused === 'ip') return Object.assign(base, { id: 'links.ip', severity: 'low', title: 'Link to a bare IP address', detail: shown + ' uses an IP address instead of a name. Last Look does not open these. Readers may see a security warning; a domain name is safer.', fixes });
     if (res.refused === 'nxdomain' || res.refused === 'dns') return Object.assign(base, { id: 'links.dns', severity: 'high', title: 'Link goes nowhere: ' + res.reason.replace(/^the domain /, ''), detail: shown + ': ' + res.reason + '. Check the spelling.', fixes });
     return Object.assign(base, { id: 'links.unchecked', severity: 'low', title: 'Link not checked', detail: shown + ': ' + res.reason + '.', fixes: [] });
   }
   if (res.kind === 'timeout') return Object.assign(base, { id: 'links.timeout', severity: 'medium', title: 'Link did not answer', detail: shown + ' gave no answer within 8 seconds. The site may be down or very slow.', fixes });
   if (res.kind === 'connect') return Object.assign(base, { id: 'links.connect', severity: 'medium', title: 'Could not connect to the link', detail: shown + ' refused the connection or has a broken certificate.', fixes });
-  if (res.kind === 'too_many_redirects' || res.kind === 'bad_redirect') return Object.assign(base, { id: 'links.redirect_loop', severity: 'high', title: 'Link redirects in circles', detail: shown + ' keeps redirecting and never lands on a page.', fixes });
+  if (res.kind === 'bad_redirect') return Object.assign(base, { id: 'links.bad_redirect', severity: 'high', title: 'Link redirects to a broken address', detail: shown + ' redirects to an address that is not valid.', fixes });
+  if (res.kind === 'too_many_redirects') return Object.assign(base, { id: 'links.redirects', severity: 'medium', title: 'Link redirects more than 3 times', detail: shown + ' bounces through more than 3 redirects (Last Look stops there). It may loop forever or end somewhere you did not expect; open it once to check.', fixes });
   if (res.kind === 'unchecked') return Object.assign(base, { id: 'links.unchecked', severity: 'low', title: 'Link not checked yet', detail: shown + ': ' + (res.reason || 'the check did not finish') + '. Run the check again.', fixes: [] });
   if (res.kind === 'http') {
     const s = res.status;

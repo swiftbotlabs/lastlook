@@ -1,9 +1,10 @@
 # Last Look · Cloudflare Worker (Swift Bot Labs)
-# Deploy: ops/deploy.sh (runs tests and the asset build first).
-# Secrets (set with ops/put_secrets.sh, never in this file): BUFFER_CLIENT_ID, BUFFER_CLIENT_SECRET, SESSION_SECRET
+# Secrets (set as Worker secrets, never in this file): BUFFER_CLIENT_ID, BUFFER_CLIENT_SECRET, SESSION_SECRET
 name = "lastlook"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
+# route every outbound fetch() as a public-internet request (link checks never take internal shortcuts)
+compatibility_flags = ["global_fetch_strictly_public"]
 account_id = "14921b4b1158675445e98816b6a01992"
 workers_dev = true
 preview_urls = false
@@ -11,30 +12,30 @@ preview_urls = false
 [assets]
 directory = "public"
 
+# No request logs are stored: Cloudflare Workers Logs and invocation logs are off.
 [observability]
-enabled = true
+enabled = false
 
 [[kv_namespaces]]
 binding = "SESSIONS"
 id = "87c3dab55170438f8e8ba7b5d96f4206"
 
-# Per-key rate limits (Workers rate limiting binding; period must be 10 or 60 seconds)
+# The gate: one-session-per-account registry, app-wide Buffer allowance, per-account budgets, link limits
+[[durable_objects.bindings]]
+name = "GATE"
+class_name = "Gate"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Gate"]
+
+# Per-IP limits, checked before any session lookup (Workers rate limiting binding; period must be 10 or 60 s)
+[[ratelimits]]
+name = "RL_IP"
+namespace_id = "41005"
+simple = { limit = 120, period = 60 }
+
 [[ratelimits]]
 name = "RL_AUTH"
 namespace_id = "41001"
-simple = { limit = 10, period = 60 }
-
-[[ratelimits]]
-name = "RL_SCAN"
-namespace_id = "41002"
-simple = { limit = 4, period = 60 }
-
-[[ratelimits]]
-name = "RL_LINKS"
-namespace_id = "41003"
-simple = { limit = 30, period = 60 }
-
-[[ratelimits]]
-name = "RL_WRITE"
-namespace_id = "41004"
 simple = { limit = 10, period = 60 }

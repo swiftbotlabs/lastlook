@@ -16,23 +16,41 @@ export const graphemeCount = (s) => graphemes(s).length;
    Returns [{url, start, end, raw}] where url is the absolute URL to check and start/end index the raw text. */
 const URL_RE = /\b(?:https?:\/\/|www\.)[^\s<>"'`  -​　]+/gi;
 const TRAIL_CHARS = '.,;:!?\'"’”]}>*_~';
-/* trim trailing punctuation, but keep a ')' that closes a '(' inside the URL (wikipedia style) */
+/* trim trailing punctuation, but keep a ')' that closes a '(' inside the URL (wikipedia style).
+   Linear: the bracket counts are taken once and updated as characters are dropped. */
 function trimUrl(raw) {
-  for (;;) {
-    const last = raw[raw.length - 1];
-    if (!last) return raw;
+  let opens = 0; let closes = 0;
+  for (let i = 0; i < raw.length; i++) { const c = raw.charCodeAt(i); if (c === 40) opens++; else if (c === 41) closes++; }
+  let end = raw.length;
+  while (end > 0) {
+    const last = raw[end - 1];
     if (last === ')') {
-      const opens = (raw.match(/\(/g) || []).length;
-      const closes = (raw.match(/\)/g) || []).length;
-      if (closes <= opens) return raw;
-      raw = raw.slice(0, -1);
+      if (closes <= opens) break;
+      closes--; end--;
       continue;
     }
-    if (TRAIL_CHARS.includes(last)) { raw = raw.slice(0, -1); continue; }
-    return raw;
+    if (TRAIL_CHARS.includes(last)) { end--; continue; }
+    break;
   }
+  return raw.slice(0, end);
 }
+/* Longest text the pattern-based checks read. Buffer's longest post limit is 25,000 (X paid plans). */
+export const MAX_CHECK_TEXT = 30000;
+export const clipForChecks = (s) => { const t = String(s || ''); return t.length > MAX_CHECK_TEXT ? t.slice(0, MAX_CHECK_TEXT) : t; };
+
+/* the same text is scanned by several checks: keep the last few results */
+const urlCache = new Map();
 export function findUrls(text) {
+  const key = String(text || '');
+  const hit = urlCache.get(key);
+  if (hit) return hit;
+  const res = Object.freeze(findUrlsUncached(key));
+  if (urlCache.size >= 64) urlCache.delete(urlCache.keys().next().value);
+  urlCache.set(key, res);
+  return res;
+}
+export function clearUrlCache() { urlCache.clear(); }
+function findUrlsUncached(text) {
   const s = String(text || '');
   const out = [];
   URL_RE.lastIndex = 0;
@@ -97,7 +115,10 @@ export function words(norm) { return norm.split(' ').filter(Boolean); }
 /* How alike two normalised texts are, 0..1: one minus the word-level edit distance over the longer length
    (one extra word in a 14-word post = 0.93). A cheap word-set overlap filters out clearly different pairs first. */
 export function similarity(a, b) {
-  const wa = words(a); const wb = words(b);
+  return similarityWords(words(a), words(b));
+}
+/* the edit-distance table costs |wa| x |wb| steps; callers cap the word counts */
+export function similarityWords(wa, wb) {
   if (!wa.length || !wb.length) return 0;
   const A = new Set(wa); const B = new Set(wb);
   let inter = 0;

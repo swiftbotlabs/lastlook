@@ -1,5 +1,5 @@
 /* Extra checks: leftover placeholders, images without alt text, hashtag and mention problems. */
-import { maskUrls, clip } from './text.js';
+import { maskUrls, clip, clipForChecks } from './text.js';
 import { SERVICE_NAMES } from './length.js';
 
 /* leftovers from templates and drafts */
@@ -15,7 +15,7 @@ export function checkPlaceholders(post) {
   const flags = [];
   const items = post.thread && post.thread.length > 1 ? post.thread.map((t, i) => ({ text: t.text, where: 'thread:' + i })) : [{ text: post.text, where: 'text' }];
   for (const it of items) {
-    const masked = maskUrls(it.text);
+    const masked = maskUrls(clipForChecks(it.text));
     const spans = [];
     const found = [];
     for (const re of PLACEHOLDERS) {
@@ -59,7 +59,7 @@ const MANY_TAGS = { twitter: 3, bluesky: 3, threads: 1, linkedin: 5, mastodon: 6
 export function checkTags(post, channel) {
   const service = (channel && channel.service) || post.channelService;
   const flags = [];
-  const text = String(post.text || '');
+  const text = clipForChecks(post.text);
   const masked = maskUrls(text);
   const tags = masked.match(/(^|[^\w&#])#[\p{L}\p{N}_]+/gu) || [];
   const n = tags.length;
@@ -110,7 +110,8 @@ export function checkTags(post, channel) {
   /* unbalanced brackets and quotes */
   const pairs = [['(', ')'], ['[', ']'], ['“', '”']];
   /* smileys and list markers are not brackets: ":)", ";-(", "(:", "1)", "a)" */
-  const plain = masked.replace(/[:;=8xX][-^'o]?[()\[\]]+|[()\[\]]+[-^']?[:;=8]/g, ' ').replace(/(^|\s)[0-9a-zA-Z]{1,2}\)/g, ' ');
+  /* bounded repeats ({1,3}): an open-ended run here backtracked quadratically on long bracket runs */
+  const plain = masked.replace(/[:;=8xX][-^'o]?[()\[\]]{1,3}|[()\[\]]{1,3}[-^']?[:;=8]/g, ' ').replace(/(^|\s)[0-9a-zA-Z]{1,2}\)/g, ' ');
   for (const [o, c] of pairs) {
     const no = plain.split(o).length - 1; const nc = plain.split(c).length - 1;
     if (no !== nc && no + nc > 0) {
