@@ -479,7 +479,7 @@ async function fix(env, s, body) {
     position = body.position === 'top' ? 'top' : body.position === 'bottom' ? 'bottom' : null;
     if (!position) return fail(400, 'bad_input', 'Pick top or bottom.');
   }
-  /* a reorder also re-reads the channel's queue afterwards (Buffer moves every post between the two slots), so the
+  /* a reorder also re-reads the channel's queue afterwards (to see every post whose time changed), so the
      organization must be one of this session's own */
   let moveOrg = null;
   if (action === 'move') {

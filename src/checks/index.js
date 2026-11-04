@@ -1,6 +1,6 @@
 /* Runs every check over a scanned queue. Pure: input is the shaped channels and posts, output is per-post flags
    plus the list of links the browser should ask /api/links to check. */
-import { checkTime, checkNight, checkSlotShift } from './time.js';
+import { checkTime, checkNight, checkSlotShift, checkShareNext } from './time.js';
 import { checkFormatting } from './format.js';
 import { checkLength } from './length.js';
 import { checkDuplicates } from './dupes.js';
@@ -65,6 +65,7 @@ export function runAll(channels, posts, now, opts) {
       if (spans.length) flags = flags.filter((f) => !(f.id === 'time.relative_queue' && (f.spans || []).some(([a, b]) => spans.some(([c, d]) => a < d && c < b))));
     }
     run(() => checkNight(p, ch));
+    run(() => checkShareNext(p));
     run(() => checkFormatting(p, ch));
     run(() => checkLength(p, ch));
     run(() => checkPlaceholders(p));

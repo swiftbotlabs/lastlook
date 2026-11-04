@@ -80,20 +80,26 @@ test('sample backend: scan shape, link results, and the fix guards of /api/fix',
   await assert.rejects(be.fix({ postId: hiring.id, action: 'move', position: 'top', confirm: true, expectedHash: await sha(hiring.text) }), (e) => e.code === 'not_queue');
 });
 
-test('sample backend: moving a queue post reorders the channel queue and keeps its slots', async () => {
+test('sample backend: moves behave like Buffer: the end takes the slot after the last post, the front shares next with no time', async () => {
   const be = new SampleBackend(() => new Date('2026-11-03T05:00:00Z'));
   const d = await be.scan();
   const xSlots = d.posts.filter((p) => p.channelId === 'kiln-x' && !p.isCustomScheduled).sort((a, b) => Date.parse(a.dueAt) - Date.parse(b.dueAt));
   assert.deepEqual(xSlots.map((p) => p.id), ['s-sale', 's-bowls-1', 's-bowls-2']);
-  const last = xSlots[2];
-  const r = await be.fix({ postId: last.id, action: 'move', position: 'top', confirm: true, expectedHash: await sha(last.text) });
-  assert.equal(r.post.dueAt, xSlots[0].dueAt);
-  assert.deepEqual(r.shifted.map((p) => [p.id, p.dueAt]), [['s-sale', xSlots[1].dueAt], ['s-bowls-1', xSlots[2].dueAt]]);
-  /* after the move the checks see the new send day: "Happy Friday" now goes out on Tuesday */
+  const sale = xSlots[0];
+  const r = await be.fix({ postId: sale.id, action: 'move', position: 'bottom', confirm: true, expectedHash: await sha(sale.text) });
+  assert.equal(r.post.dueAt, new Date(Date.parse(xSlots[2].dueAt) + 864e5).toISOString(), 'the slot after the last queued post');
+  assert.deepEqual(r.shifted, [], 'the other posts keep their times');
+  /* after the move the checks see the new send day: "Happy Friday" now goes out on Friday... of the next week */
   const after = (await be.scan()).posts;
   const res = runAll(SAMPLE_CHANNELS, after, new Date('2026-11-03T05:00:00Z'));
-  const sale = res.posts.find((p) => p.id === 's-sale');
-  assert.match(sale.flags.find((f) => f.id === 'time.wrong_day').title, /Tuesday/);
+  const moved = res.posts.find((p) => p.id === 's-sale');
+  assert.equal(moved.dueAt, r.post.dueAt);
+  /* to the front: share next, no time */
+  const bowls = xSlots[2];
+  const r2 = await be.fix({ postId: bowls.id, action: 'move', position: 'top', confirm: true, expectedHash: await sha(bowls.text) });
+  assert.equal(r2.post.dueAt, null);
+  assert.equal(r2.post.shareNext, true);
+  assert.equal(r2.post.shareMode, 'shareNext');
 });
 
 test('sample page never touches the network: no fetch from the sample backend, and api() refuses in try mode', async () => {

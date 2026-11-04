@@ -145,7 +145,8 @@ test('build: refresh rotates the token and the new one is saved before the read;
   const dq = b.gql.filter((q) => /query Digest/.test(q.query));
   assert.equal(dq.length, 1);
   assert.match(dq[0].query, /status: \[scheduled, needs_approval\]/);
-  assert.match(dq[0].query, /dueAt: \{ start: \$start, end: \$end \}/);
+  assert.ok(!/dueAt: \{/.test(dq[0].query), 'no dueAt filter: share-next posts have no time and must not be left out');
+  assert.match(dq[0].query, /sort: \[\{ field: dueAt, direction: asc \}\]/);
   assert.ok(!/mutation/.test(dq[0].query));
   assert.equal(dq[0].variables.first, DIGEST.maxPosts);
   const all = storeText(env);
@@ -328,13 +329,13 @@ test('only the posts inside the window, with at most 4 links opened, private lin
   const b = fakeBuffer({ posts: () => [
     NODE('in1', inside, 'Admin page http://localhost:8080/admin and https://shop.example.net/gone'),
     NODE('in2', inside, 'More: https://shop.example.net/a https://shop.example.net/b https://shop.example.net/c https://shop.example.net/d'),
-    NODE('out', outside, 'OUTSIDE the window **bold**')
+    NODE('out', outside, 'OUTSIDE the window **bold**'),
+    NODE('next', '1970-01-01T00:00:00.000Z', 'SHARE NEXT post: doors open tomorrow', { shareMode: 'addToQueue' })
   ] });
   const ft = ftOf((await subscribe(env, b)).cb);
   await runAlarms(env);
   const dq = b.gql.find((q) => /query Digest/.test(q.query));
-  const w = digestWindow(Date.parse(dq.variables.start), 'Europe/London');
-  assert.equal(dq.variables.end, new Date(w.to).toISOString());
+  assert.deepEqual(Object.keys(dq.variables).sort(), ['first', 'org']);
   assert.ok(!b.calls.some((u) => /localhost/.test(u)), 'a private link is never fetched');
   const heads = b.calls.filter((u) => u.startsWith('https://shop.example.net/'));
   assert.ok(heads.length <= DIGEST.maxLinks, 'at most 4 links opened, got ' + heads.length);
@@ -342,6 +343,9 @@ test('only the posts inside the window, with at most 4 links opened, private lin
   assert.match(page, /Link points to a private address/);
   assert.match(page, /Broken link \(404 Not Found\)/);
   assert.ok(!page.includes('OUTSIDE the window'), 'posts outside the window are left out even if returned');
+  assert.match(page, /SHARE NEXT post/, 'a post set to share next (no time) is in the digest');
+  assert.match(page, /Shares next/);
+  assert.match(page, /in a post set to share next/);
   assert.match(page, /of 6 links opened/);
 });
 

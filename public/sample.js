@@ -195,12 +195,17 @@ export class SampleBackend {
     } else {
       if (post.status !== 'scheduled' || post.isCustomScheduled) throw refuse(409, 'not_queue', 'Only posts in queue slots can be moved in the queue. This one has its own time.');
       if (b.position !== 'top' && b.position !== 'bottom') throw refuse(400, 'bad_input', 'Pick top or bottom.');
-      /* like Buffer: the queue keeps its slots, the order changes */
-      const slots = this.posts.filter((p) => p.channelId === post.channelId && p.status === 'scheduled' && !p.isCustomScheduled).sort((a, c) => Date.parse(a.dueAt) - Date.parse(c.dueAt));
-      const times = slots.map((p) => p.dueAt);
-      const order = slots.filter((p) => p !== post);
-      if (b.position === 'top') order.unshift(post); else order.push(post);
-      order.forEach((p, i) => { if (p.dueAt !== times[i]) { p.dueAt = times[i]; if (p !== post) shifted.push(p); } });
+      /* what Buffer does (seen on a live, paused test queue on 4 Nov 2026): to the top, the post is set to share next
+         and has no time until it goes out; to the bottom, it takes the slot after the last queued post (here the
+         same time of day, one day later). The other posts keep their times. */
+      if (b.position === 'top') {
+        post.shareMode = 'shareNext'; post.shareNext = true; post.dueAt = null;
+      } else {
+        const others = this.posts.filter((p) => p !== post && p.channelId === post.channelId && p.status === 'scheduled' && !p.isCustomScheduled && p.dueAt);
+        const last = others.reduce((m, p) => Math.max(m, Date.parse(p.dueAt)), post.dueAt ? Date.parse(post.dueAt) : this.now().getTime());
+        post.dueAt = new Date(last + 864e5).toISOString();
+        post.shareMode = 'addToQueue'; post.shareNext = false;
+      }
     }
     post.updatedAt = this.now().toISOString();
     this.version++;

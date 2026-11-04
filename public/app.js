@@ -281,11 +281,15 @@ function shiftBanner(d) {
   const name = ch ? (ch.displayName || ch.name) : 'this channel';
   if (ls.error) return el('div', { class: 'banner calm', role: 'status' }, el('strong', null, 'Moved. '), 'Last Look could not read the queue again just now, so the new times of the other posts on ' + name + ' are not checked yet. Scan again in a minute.');
   const ids = new Set(ls.ids.concat([ls.moved]));
-  const wrong = d.posts.filter((p) => ids.has(p.id) && flagsFor(p).some((f) => f.id === 'time.slot_shift'));
+  const wrong = d.posts.filter((p) => ids.has(p.id) && flagsFor(p).some((f) => f.id === 'time.slot_shift' || f.id === 'time.share_next'));
   const n = ls.ids.length;
-  const lead = n ? 'Reordered. Buffer gave ' + plural(n, 'other post') + ' on ' + name + ' a new time. ' : 'Reordered. No other post on ' + name + ' changed time. ';
-  const tail = wrong.length ? plural(wrong.length, 'post') + ' now say' + (wrong.length === 1 ? 's' : '') + ' the wrong day: Last Look re-checked “tomorrow”, “tonight” and weekday words against each new slot.' : 'Last Look re-checked their day words against each new slot: they still point to the right days.';
-  return el('div', { class: 'banner ' + (wrong.length ? 'warn shift' : 'calm shift'), role: 'status', id: 'shift-banner' }, el('strong', null, lead), tail);
+  const tz = ch ? ch.timezone : 'Europe/London';
+  const moved = ls.next ? 'Buffer set it to share next, with no time until it goes out. '
+    : ls.from && ls.to && ls.from !== ls.to ? 'Buffer moved it from ' + fmtWhen(ls.from, tz) + ' to ' + fmtWhen(ls.to, tz) + '. ' : '';
+  const lead = 'Moved ' + (ls.next ? 'to the front' : 'to the end') + ' of the queue on ' + name + '. ';
+  const others = n ? plural(n, 'other post') + ' got a new time too. ' : 'No other post changed time. ';
+  const tail = wrong.length ? 'Last Look re-checked the day words of every post that moved: ' + plural(wrong.length, 'post') + ' now say' + (wrong.length === 1 ? 's' : '') + ' the wrong day.' : 'Last Look re-checked the day words of every post that moved: they still point to the right days.';
+  return el('div', { class: 'banner ' + (wrong.length ? 'warn shift' : 'calm shift'), role: 'status', id: 'shift-banner' }, el('strong', null, lead), moved + others + tail);
 }
 
 /* the flag cards, each with its suggested-text buttons (the same cards on a queue post and on your own post);
@@ -314,9 +318,9 @@ function renderPost(p, ch) {
   const badges = [];
   if (p.status === 'draft') badges.push(el('span', { class: 'badge draft' }, 'draft'));
   if (p.status === 'needs_approval') badges.push(el('span', { class: 'badge' }, 'awaiting approval'));
-  if (p.status === 'scheduled') badges.push(el('span', { class: 'badge' }, p.isCustomScheduled ? 'custom time' : 'queue slot'));
+  if (p.status === 'scheduled') badges.push(el('span', { class: 'badge' }, p.shareNext ? 'share next' : p.isCustomScheduled ? 'custom time' : 'queue slot'));
   art.append(el('div', { class: 'post-meta' },
-    el('span', { class: 'when' }, p.dueAt ? fmtWhen(p.dueAt, ch.timezone) : (p.status === 'draft' ? 'Not scheduled' : 'No time set')),
+    el('span', { class: 'when' }, p.dueAt ? fmtWhen(p.dueAt, ch.timezone) : p.shareNext ? 'Shares next · no time yet' : (p.status === 'draft' ? 'Not scheduled' : 'No time set')),
     p.dueAt ? el('span', null, fromNow(p.dueAt)) : null, ...badges, el('span', { class: 'svc' }, svcName(ch.service))));
   if (p.thread && p.thread.length > 1) {
     p.thread.forEach((t, i) => {
@@ -642,9 +646,11 @@ function openSimple(post, channel, action, position) {
     openDialog({ edit: false, action, post, channel, title: 'Move to drafts?', desc: '“' + snippet + '” will stop being scheduled and wait in your Buffer drafts, where you can edit and schedule it again.', ok: 'Move to drafts' });
   } else {
     openDialog({ edit: false, action, position, post, channel,
-      title: position === 'top' ? 'Move to the front of the queue?' : 'Move to the end of the queue?',
-      desc: '“' + snippet + '” will take the ' + (position === 'top' ? 'next' : 'last') + ' slot in this channel’s queue, so its send time will change' + (post.dueAt ? ' (now ' + fmtWhen(post.dueAt, channel.timezone) + ')' : '') + '. Buffer picks the new time from your posting schedule.',
-      ok: position === 'top' ? 'Move to front' : 'Move to end' });
+      title: position === 'top' ? 'Share it next?' : 'Move to the end of the queue?',
+      desc: position === 'top'
+        ? '“' + snippet + '” goes to the front of this channel’s queue: Buffer sets it to share next and shows no time for it until it goes out' + (post.dueAt ? ' (now ' + fmtWhen(post.dueAt, channel.timezone) + ')' : '') + '. On a queue that is not paused, that can be right away. Last Look then reads the queue again.'
+        : '“' + snippet + '” takes the last slot in this channel’s queue, after every other queued post, so its send time moves' + (post.dueAt ? ' (now ' + fmtWhen(post.dueAt, channel.timezone) + ')' : '') + '. Last Look then reads the queue again and re-checks the day words of every post that moved.',
+      ok: position === 'top' ? 'Share next' : 'Move to end' });
   }
 }
 async function confirmDialog() {
@@ -745,8 +751,8 @@ async function doUndo(postId) {
 /* replace the one post with Buffer's answer and re-run the checks locally */
 function applyFixResult(res) {
   if (!state.raw || !res || !res.post) return;
-  /* the send times before this change: a reorder moves every post between the two slots, and their day words are
-     then re-judged against what they meant at the slot they had (see checkSlotShift) */
+  /* the send times before this change: after a reorder, every post whose time changed (Buffer gives the moved post a
+     new slot) has its day words re-judged against what they meant at the slot it had (see checkSlotShift) */
   const before = new Map(state.raw.posts.map((x) => [x.id, x.dueAt]));
   if (res.action === 'edit' || res.action === 'undo') {
     /* an edit is written for the post's current slot: its old slot no longer says what the words should mean.
@@ -774,7 +780,9 @@ function applyFixResult(res) {
       if (keep && keep.from === p.dueAt) state.shifts.delete(p.id); else state.shifts.set(p.id, { from: keep ? keep.from : was, to: p.dueAt });
       moved.push(p.id);
     }
-    state.lastShift = { moved: res.post.id, channelId: res.post.channelId, ids: moved.filter((id) => id !== res.post.id), error: !!res.shiftedError };
+    const was = before.get(res.post.id);
+    state.lastShift = { moved: res.post.id, channelId: res.post.channelId, ids: moved.filter((id) => id !== res.post.id), error: !!res.shiftedError,
+      from: was || null, to: res.post.dueAt || null, next: !!res.post.shareNext, position: res.post.shareNext ? 'top' : 'bottom' };
   }
   for (const l of res.links || []) if (!state.links.has(l.url)) state.linkQueue.push({ url: l.url, sig: l.sig, ts: res.ts });
   recompute();

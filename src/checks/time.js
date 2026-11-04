@@ -513,3 +513,19 @@ export function checkSlotShift(post, channel, fromIso) {
   }
   return flags;
 }
+
+/* A post set to "share next" (Buffer: movePostInQueue to the top) has no time until it goes out, so its day words
+   cannot be judged; say so instead of judging them at a made-up time. */
+export function checkShareNext(post) {
+  if (!post || !post.shareNext || post.status !== 'scheduled') return [];
+  const text = clipForChecks(post.text || '');
+  const words = findRelative(text);
+  if (!words.length) return [];
+  const w = words[0];
+  return [{
+    check: 'time', id: 'time.share_next', severity: 'medium', where: 'text', spans: words.map((r) => [r.start, r.end]),
+    title: '“' + w.raw + '” in a post set to share next',
+    detail: 'Buffer shares this post next and shows no time for it until then, so Last Look cannot say which day “' + w.raw.toLowerCase() + '” will mean. Check it still fits the day it goes out, or give the post a fixed time in Buffer.',
+    fixes: [{ type: 'edit', label: 'Use a date instead' }, { type: 'draft' }]
+  }];
+}

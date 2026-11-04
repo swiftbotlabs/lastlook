@@ -166,36 +166,49 @@ function nodes(root) { const out = []; const go = (n) => { out.push(n); for (con
 const byTag = (root, t) => nodes(root).filter((n) => n.tag === t);
 const buttons = (root, label) => byTag(root, 'button').filter((n) => n.text() === label);
 
-test('page: on the sample, moving a repeat to the front re-checks the post it pushed back and offers the fix', async () => {
+test('page: on the sample, moving the sale post to the end re-checks its "tomorrow" at the new slot and says how it moved', async () => {
   const b = browser({ meta: { mode: 'try' }, path: '/try', hash: '#sample' });
   await b.load();
   b.$('f-all').click(); await b.flush();
-  const q = b.$('queue');
-  const arts = byTag(q, 'article');
-  const repeat = arts.find((n) => /speckled bowls/.test(n.text()) && buttons(n, 'Move to front of queue').length);
-  assert.ok(repeat, 'a queue-slot repeat with a Move to front button');
-  /* the sample queue: on X, slot 1 holds the "ends tomorrow" sale post */
-  const sale = sampleQueue(new Date(b.clock)).find((p) => p.id === 's-sale');
-  assert.match(sale.text, /ends tomorrow/);
-  const bowls = arts.filter((n) => /speckled bowls/.test(n.text()) && buttons(n, 'Move to front of queue').length);
-  buttons(bowls[bowls.length - 1], 'Move to front of queue')[0].click();
+  const sale0 = sampleQueue(new Date(b.clock)).find((p) => p.id === 's-sale');
+  assert.match(sale0.text, /ends tomorrow/);
+  const saleCard = () => byTag(b.$('queue'), 'article').find((n) => /autumn glaze sale/.test(n.text()));
+  assert.ok(!/now means/.test(saleCard().text()), 'no reorder flag before a move');
+  buttons(saleCard(), 'Move to end of queue')[0].click();
   assert.equal(b.$('dlg').open, true);
+  assert.match(b.$('dlg-desc').textContent, /takes the last slot/);
   b.$('dlg-ok').click();
   await settle(b);
   assert.equal(b.$('dlg').open, false, document.getElementById('dlg-error').textContent);
   const banner = b.$('queue').find('shift-banner');
   assert.ok(banner, 'a banner after the reorder');
-  assert.match(banner.text(), /Reordered\. Buffer gave \d+ other posts? on Little Kiln \(X\) a new time\./);
+  assert.match(banner.text(), /^Moved to the end of the queue on Little Kiln \(X\)\. Buffer moved it from Mon 9 Nov 09:30 to Fri 13 Nov 09:30\. No other post changed time\./);
   assert.match(banner.text(), /1 post now says the wrong day/);
-  const saleCard = byTag(b.$('queue'), 'article').find((n) => /autumn glaze sale/.test(n.text()));
-  assert.match(saleCard.text(), /“tomorrow” now means/);
-  const say = buttons(saleCard, 'Say “today”');
-  assert.equal(say.length, 1);
-  say[0].click();
-  assert.match(b.$('dlg-text').value, /sale ends today:/);
+  const card = saleCard();
+  assert.match(card.text(), /“tomorrow” now means Sat 14 Nov, not Tue 10 Nov/);
+  assert.match(card.text(), /has passed/, 'Tuesday is already past at the new slot: no made-up word');
+  assert.equal(buttons(card, 'Move to front of queue').length, 1, 'offers the front of the queue');
+  /* to the front: Buffer shares it next with no time; its day words are flagged as unknown, never judged at a fake time */
+  buttons(card, 'Move to front of queue')[0].click();
+  assert.match(b.$('dlg-title').textContent, /Share it next/);
   b.$('dlg-ok').click();
   await settle(b);
-  const after = byTag(b.$('queue'), 'article').find((n) => /autumn glaze sale/.test(n.text()));
-  assert.ok(!/now means/.test(after.text()), 'the edited post is judged at its new slot');
+  const next = saleCard();
+  assert.match(next.text(), /Shares next · no time yet/);
+  assert.match(next.text(), /in a post set to share next/);
+  assert.ok(!/1970/.test(next.text()));
+  assert.match(b.$('queue').find('shift-banner').text(), /Buffer set it to share next, with no time until it goes out/);
   assert.equal(b.requests.length, 0, 'the sample never calls the network');
+});
+
+test('worker: a post Buffer reports with dueAt 1970 or shareNext is shaped as "share next" with no time', async () => {
+  const { shapePost } = await import('../src/buffer.js');
+  for (const n of [{ shareMode: 'shareNext', dueAt: '1970-01-01T00:00:00.000Z' }, { shareMode: 'addToQueue', dueAt: '1970-01-01T00:00:00.000Z' }, { shareMode: 'shareNext', dueAt: null }]) {
+    const p = shapePost(Object.assign({ id: 'x', channelId: 'c', status: 'scheduled', text: 'see you tomorrow' }, n));
+    assert.equal(p.dueAt, null);
+    assert.equal(p.shareNext, true);
+  }
+  const normal = shapePost({ id: 'x', channelId: 'c', status: 'scheduled', text: 't', shareMode: 'addToQueue', dueAt: '2026-11-05T15:39:00.000Z' });
+  assert.equal(normal.shareNext, false);
+  assert.equal(normal.dueAt, '2026-11-05T15:39:00.000Z');
 });

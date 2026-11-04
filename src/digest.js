@@ -110,12 +110,12 @@ export function composeEntry(channels, checked, linkStats, w, tz, now, extra) {
     const flags = (p.flags || []).filter((f) => f.severity === 'high' || f.severity === 'medium');
     if (!flags.length) continue;
     const ch = chMap.get(p.channelId) || { name: 'Unknown channel', service: p.channelService, timezone: tz };
-    const lp = localParts(new Date(p.dueAt), ch.timezone);
+    const lp = p.dueAt ? localParts(new Date(p.dueAt), ch.timezone) : null;
     high += flags.filter((f) => f.severity === 'high').length;
     posts.push({
-      when: fmtDay(lp, lp.y) + ' ' + fmtTime(lp),
+      when: lp ? fmtDay(lp, lp.y) + ' ' + fmtTime(lp) : 'Shares next',
       ch: clip(ch.displayName || ch.name, 60) + ' (' + (SVC[ch.service] || ch.service || 'channel') + ')',
-      slot: p.status === 'needs_approval' ? 'awaiting approval' : (p.isCustomScheduled || p.shareMode === 'customScheduled') ? 'custom time' : 'queue slot',
+      slot: p.status === 'needs_approval' ? 'awaiting approval' : p.shareNext ? 'share next' : (p.isCustomScheduled || p.shareMode === 'customScheduled') ? 'custom time' : 'queue slot',
       excerpt: clip(p.text, DIGEST.excerpt),
       flags: flags.slice(0, 6).map((f) => ({ s: f.severity, t: clip(f.title, 160), d: clip(f.detail, 320) }))
     });
@@ -362,7 +362,7 @@ export class DigestCore {
       let more = false;
       for (const org of orgs) {
         used++;
-        const r = await gql(tok.at, Q_DIGEST, { org: org.id, start: new Date(w.from).toISOString(), end: new Date(w.to).toISOString(), first: DIGEST.maxPosts });
+        const r = await gql(tok.at, Q_DIGEST, { org: org.id, first: DIGEST.maxPosts });
         rate = r.rate;
         for (const c of (r.data.channels || []).slice(0, 100)) channels.push(shapeChannel(c));
         const edges = ((r.data.posts || {}).edges || []);
@@ -370,7 +370,9 @@ export class DigestCore {
         for (const e of edges) if (e && e.node) posts.push(shapePost(e.node));
       }
       await this.gate({ op: 'record', windows: (rate && rate.windows) || {}, hold: adm.hold, used });
-      const live = posts.filter((p) => (p.status === 'scheduled' || p.status === 'needs_approval') && p.dueAt && Date.parse(p.dueAt) >= w.from && Date.parse(p.dueAt) <= w.to).slice(0, DIGEST.maxPosts);
+      /* inside the window: posts due from now to the end of tomorrow, and posts set to share next (no time, soonest of all) */
+      const live = posts.filter((p) => (p.status === 'scheduled' || p.status === 'needs_approval') && (p.shareNext || (p.dueAt && Date.parse(p.dueAt) >= w.from && Date.parse(p.dueAt) <= w.to))).slice(0, DIGEST.maxPosts);
+      more = more && live.length >= DIGEST.maxPosts;
       const checked = runAll(channels, live, new Date(now)).posts;
       const linkStats = await this.links(s.acct, checked);
       const entry = composeEntry(channels, checked, linkStats, w, s.tz, now, { more, orgsSkipped: Math.max(0, (s.orgs || []).length - orgs.length) });

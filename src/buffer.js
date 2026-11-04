@@ -133,10 +133,12 @@ export const Q_LOOKBACK = `query LookBack($org: OrganizationId!, $first: Int!) {
   }
 }`;
 
-/* daily digest: the posts going out in a time window (scheduled or awaiting approval), with the channels (a query) */
-export const Q_DIGEST = `query Digest($org: OrganizationId!, $start: DateTime!, $end: DateTime!, $first: Int!) {
+/* daily digest: the next posts to go out (scheduled or awaiting approval, soonest first, so posts set to share next,
+   which have no time, come first), with the channels (a query). The window is applied after reading, because a
+   dueAt filter would leave out the share-next posts, the ones going out soonest. */
+export const Q_DIGEST = `query Digest($org: OrganizationId!, $first: Int!) {
   channels(input: { organizationId: $org }) { ${CHANNEL_FIELDS} }
-  posts(first: $first, input: { organizationId: $org, filter: { status: [scheduled, needs_approval], dueAt: { start: $start, end: $end } }, sort: [{ field: dueAt, direction: asc }] }) {
+  posts(first: $first, input: { organizationId: $org, filter: { status: [scheduled, needs_approval] }, sort: [{ field: dueAt, direction: asc }] }) {
     edges { node { ${POST_FIELDS} } }
   }
 }`;
@@ -161,12 +163,19 @@ function assetOut(a) {
   if (!a || typeof a !== 'object') return null;
   return { type: String(a.type || ''), altText: a.image ? String(a.image.altText || '') : null };
 }
+/* "share next" (what movePostInQueue to the top does): Buffer reports dueAt as 1970-01-01 and no time until it goes out */
+export function noTime(shareMode, dueAt) {
+  if (shareMode === 'shareNext') return true;
+  const t = dueAt ? Date.parse(dueAt) : NaN;
+  return Number.isFinite(t) && t < Date.UTC(2000, 0, 1);
+}
 export function shapePost(n) {
   const md = n.metadata || {};
+  const next = noTime(n.shareMode, n.dueAt);
   const thread = Array.isArray(md.thread) ? md.thread.slice(0, 50).map((t) => ({ text: String((t && t.text) || ''), assets: (t && Array.isArray(t.assets) ? t.assets : []).slice(0, 10).map(assetOut).filter(Boolean) })) : [];
   return {
     id: String(n.id), channelId: String(n.channelId), channelService: String(n.channelService || ''),
-    status: String(n.status || ''), dueAt: n.dueAt || null, createdAt: n.createdAt || null, updatedAt: n.updatedAt || null,
+    status: String(n.status || ''), dueAt: next ? null : n.dueAt || null, shareNext: next, createdAt: n.createdAt || null, updatedAt: n.updatedAt || null,
     shareMode: n.shareMode || null, isCustomScheduled: !!n.isCustomScheduled, schedulingType: n.schedulingType || null,
     text: String(n.text || ''), allowedActions: Array.isArray(n.allowedActions) ? n.allowedActions.map(String).slice(0, 40) : [],
     publishError: n.error && n.error.message ? String(n.error.message).slice(0, 300) : null,
