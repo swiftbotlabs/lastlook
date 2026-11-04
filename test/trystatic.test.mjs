@@ -82,6 +82,10 @@ test('/try plain copy: works on any date (every week day for a fortnight), and t
     assert.ok(s.html.includes('goes out on a Monday'), at.toISOString());
     assert.ok(!/\bloading\b/i.test(visibleText(s.html)));
   }
+  /* built at most once a minute: the same minute gives the same result object, the next minute a new one */
+  const m0 = Date.parse('2026-11-20T10:00:05Z');
+  assert.equal(trySample(new Date(m0)), trySample(new Date(m0 + 50000)));
+  assert.notEqual(trySample(new Date(m0)), trySample(new Date(m0 + 60000)));
   /* markText escapes every character it is given, marked or not */
   const evil = '<img src=x onerror=alert(1)> & "q" \'s\'';
   const out = markText(evil, [{ where: 'text', severity: 'high', spans: [[0, 4]] }], 'text');

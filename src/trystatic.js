@@ -101,10 +101,19 @@ function postHtml(p, ch, nowMs) {
     + '</article>';
 }
 
-/* the numbers and the HTML of the sample at `now` (a Date); used by /try and by the tests */
+/* the numbers and the HTML of the sample at `now` (a Date); used by /try and by the tests. The checks take a few ms
+   of CPU, so the result is kept for the rest of that minute (per isolate): at most one build a minute. */
+let memo = null;
 export function trySample(now) {
   const at = now || new Date();
   const nowMs = at.getTime();
+  const minute = Math.floor(nowMs / 60000);
+  if (memo && memo.minute === minute) return memo.out;
+  const out = build(at, nowMs);
+  memo = { minute, out };
+  return out;
+}
+function build(at, nowMs) {
   const rules = cleanRules(SAMPLE_RULES);
   const res = runAll(SAMPLE_CHANNELS, sampleQueue(at), at, { rules });
   const posts = res.posts.slice().sort((a, b) => Date.parse(a.dueAt) - Date.parse(b.dueAt));
