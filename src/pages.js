@@ -367,7 +367,8 @@ export function digestPage(o) {
   const latest = v.entries[0];
   const hourText = String(v.hour).padStart(2, '0') + ':00';
   const welcome = o.welcome ? `
-  <div class="banner calm" role="status"><strong>Your daily digest is on.</strong> Every day at ${esc(hourText)} (${esc(v.tz)}) this page and its feed get the posts Last Look would fix before the end of the next day. Bookmark this page, or follow the feed below. The address is private: anyone with it can read the digest, so share it only with your team.</div>` : '';
+  <div class="banner calm" role="status"><strong>Your daily digest is on.</strong> Every day at ${esc(hourText)} (${esc(v.tz)}) this page and its feed get the posts Last Look would fix before the end of the next day. Bookmark this page, or follow the feed below. The address is private: anyone with it can read the digest, so share it only with your team.</div>
+  <div class="banner calm" role="status"><strong>To keep fixing posts, connect again.</strong> Buffer ends Last Look’s earlier sign-in a minute or two after this read-only connection is added; a new sign-in leaves the digest on. <a class="btn btn-small" href="/oauth/start">Connect again</a></div>` : '';
   const entries = v.entries.map((e, i) => `
   <section class="digest-entry" aria-labelledby="d-${i}">
     <h2 id="d-${i}">${esc(digestTitle(e))}</h2>

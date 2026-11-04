@@ -400,7 +400,7 @@ function renderDigest() {
         el('li', null, el('strong', null, 'One click off: '), 'turning it off deletes its Buffer access and every stored digest at once. It also turns itself off after 14 days nobody opens it.')),
       el('div', { class: 'digest-row' }, el('label', { class: 'lbl', for: 'digest-hour' }, 'Every day at'), sel, el('span', { class: 'muted' }, localZone())),
       el('div', { class: 'cta-row' }, go),
-      el('p', { class: 'muted digest-fine' }, 'Buffer asks you to approve the read-only connection. Stored: a sealed copy of its key, and the last 7 digests with the first 140 characters of each flagged post. See Privacy.')));
+      el('p', { class: 'muted digest-fine' }, 'Buffer asks you to approve the read-only connection. A minute or two later Buffer ends this sign-in, so connect again to keep fixing posts; the digest stays on. Stored: a sealed copy of its key, and the last 7 digests with the first 140 characters of each flagged post. See Privacy.')));
     return;
   }
   $('headline').textContent = 'Daily digest is on';
@@ -938,7 +938,7 @@ function initOwn() {
 function sessionEnded() {
   state.data = null; state.raw = null; state.ended = true;
   $('headline').textContent = 'Your session ended';
-  $('subline').textContent = 'Sessions last an hour at most. Connect again to keep going.';
+  $('subline').textContent = 'Sessions last an hour at most, and Buffer ends this one a minute or two after the daily digest is turned on. Connect again to keep going.';
   $('rescan').disabled = true;
   $('queue').replaceChildren(el('div', { class: 'empty' }, el('h2', { text: 'Connect again' }), el('p', { text: 'Nothing was changed. Your posts are safe in Buffer.' }), el('a', { class: 'btn btn-primary', href: '/oauth/start' }, 'Connect Buffer')));
 }

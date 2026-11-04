@@ -382,6 +382,18 @@ test('a queue of plain scheduled posts reaches the digest (Buffer returns none f
   assert.ok(!page.includes('DRAFT ONLY'), 'a draft is not going out, so it is not in the digest');
 });
 
+test('right after turning it on, the page says Buffer ends the earlier sign-in and offers to connect again; later visits do not', async () => {
+  const env = await digestEnv();
+  const b = fakeBuffer({ posts: () => [] });
+  const ft = ftOf((await subscribe(env, b)).cb);
+  await runAlarms(env);
+  const first = await (await worker.fetch(get('/digest/' + ft + '?new=1'), env)).text();
+  assert.match(first, /To keep fixing posts, connect again\./);
+  assert.match(first, /<a class="btn btn-small" href="\/oauth\/start">Connect again<\/a>/);
+  const later = await (await worker.fetch(get('/digest/' + ft), env)).text();
+  assert.ok(!/To keep fixing posts/.test(later), 'only on the welcome visit');
+});
+
 test('/healthz: the digest watchdog fails after 6 builds in a row fail on our side, and when builds are overdue', async () => {
   const env = await digestEnv();
   let r = await worker.fetch(get('/healthz'), env);
