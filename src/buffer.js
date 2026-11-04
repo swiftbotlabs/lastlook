@@ -133,6 +133,13 @@ export const Q_LOOKBACK = `query LookBack($org: OrganizationId!, $first: Int!) {
   }
 }`;
 
+/* after a reorder: the channel's queue-slot posts with their new send times (a query, one request) */
+export const Q_QUEUE = `query Queue($org: OrganizationId!, $channel: ChannelId!) {
+  posts(first: 100, input: { organizationId: $org, filter: { status: [scheduled], channelIds: [$channel] }, sort: [{ field: dueAt, direction: asc }] }) {
+    edges { node { ${POST_FIELDS} } }
+  }
+}`;
+
 /* the mutation result carries the whole post, so the page can update that one post without a new scan */
 const RESULT = '__typename ... on PostActionSuccess { post { ' + POST_FIELDS + ' } } ... on MutationError { message }';
 export const M_EDIT_TEXT = `mutation EditText($id: PostId!, $text: String!) { editPost(input: { id: $id, text: $text }) { ${RESULT} } }`;

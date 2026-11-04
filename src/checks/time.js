@@ -422,3 +422,81 @@ export function checkNight(post, channel) {
   }
   return [];
 }
+
+/* ---------- after a queue reorder ----------
+   movePostInQueue keeps a channel's slots and changes the order, so every post between the old and the new
+   position gets a new send time, not only the one that was moved. A day word ("tomorrow", "tonight", "this
+   Friday") was right, or at least reviewed, at the slot the post had before; at the new slot it can point to
+   another day. This re-judges each word at the NEW slot against the day it meant at the OLD one, and suggests
+   the word that still points to that day from the new slot ("tomorrow" -> "today", "Thursday", ...). */
+const PART_WORDS = { tonight: 'night', 'this morning': 'morning', 'this afternoon': 'afternoon' };
+/* the words that point to `target` (a local day number) from a post going out on `base` */
+export function shiftPhrase(key, target, base) {
+  const diff = target - base.day;
+  if (diff < 0) return null;
+  const part = PART_WORDS[key];
+  if (part) {
+    if (diff === 0) return key === 'tonight' ? 'tonight' : key;
+    const dayWord = diff === 1 ? 'tomorrow' : diff < 7 ? cap(DOW_LONG[fromDayNum(target).dow]) : fmtDay(fromDayNum(target), base.y);
+    return dayWord + ' ' + part;
+  }
+  if (diff === 0) return 'today';
+  if (diff === 1) return 'tomorrow';
+  if (diff < 7) return cap(DOW_LONG[fromDayNum(target).dow]);
+  return fmtDay(fromDayNum(target), base.y);
+}
+/* keep the case of the first letter of the word being replaced */
+function matchCase(raw, word) {
+  if (/^[A-Z]/.test(raw) && word) return word.charAt(0).toUpperCase() + word.slice(1);
+  if (/^[a-z]/.test(raw) && word && !/^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/.test(word)) return word.charAt(0).toLowerCase() + word.slice(1);
+  return word;
+}
+export function checkSlotShift(post, channel, fromIso) {
+  if (!post || !post.dueAt || !fromIso || post.dueAt === fromIso) return [];
+  if (post.thread && post.thread.length > 1) return [];      /* threads are edited in Buffer */
+  const was = new Date(fromIso); const now = new Date(post.dueAt);
+  if (isNaN(was) || isNaN(now)) return [];
+  const tz = validTz((channel && channel.timezone) || DEFAULT_TZ);
+  const before = localParts(was, tz);
+  const after = localParts(now, tz);
+  const moved = 'The reorder moved this post from ' + fmtDay(before, after.y) + ' ' + fmtTime(before) + ' to ' + fmtDay(after, after.y) + ' ' + fmtTime(after) + ' (' + tz + ').';
+  const text = clipForChecks(post.text || '');
+  const dates = findDates(text, after);
+  const flags = [];
+  for (const r of findRelative(text)) {
+    const rel = r.rel;
+    let atOld, atNew;
+    if (rel.key === 'weekday') {
+      if (dates.some((d) => (r.start < d.end && d.start < r.end) || Math.abs(d.start - r.end) <= 3 || Math.abs(r.start - d.end) <= 3)) continue;
+      atOld = resolveWeekday(rel.mod, rel.wd, before);
+      atNew = resolveWeekday(rel.mod, rel.wd, after);
+    } else {
+      atOld = resolveRel(rel, before);
+      atNew = resolveRel(rel, after);
+    }
+    if (atOld == null || atNew == null || atOld === atNew) continue;
+    /* a date written right next to the word: the regular checks judge that pair */
+    if (dates.some((d) => (d.start >= r.end && d.start - r.end <= 6) || (r.start >= d.end && r.start - d.end <= 6))) continue;
+    const phrase = r.raw.toLowerCase();
+    const meant = fmtDay(fromDayNum(atOld), after.y);
+    const means = fmtDay(fromDayNum(atNew), after.y);
+    const weekish = rel.week != null || !!rel.weekend;
+    const word = weekish ? null : shiftPhrase(rel.key === 'weekday' ? 'day' : rel.key, atOld, after);
+    const passed = atOld < after.day;
+    const fixes = [];
+    if (word && word.toLowerCase() !== phrase) {
+      const repl = matchCase(r.raw, word);
+      fixes.push({ type: 'edit', label: 'Say “' + repl + '”', text: text.slice(0, r.start) + repl + text.slice(r.end) });
+    } else fixes.push({ type: 'edit', label: 'Reword' });
+    if (passed) fixes.push({ type: 'move', position: 'top' });
+    fixes.push({ type: 'draft' });
+    flags.push({
+      check: 'time', id: 'time.slot_shift', severity: 'high', where: 'text', spans: [[r.start, r.end]],
+      title: '“' + r.raw + '” now means ' + means + (weekish ? '' : ', not ' + meant),
+      detail: moved + ' At the old slot “' + phrase + '” meant ' + meant + '. ' + (passed ? 'By the new time that day has passed: move it back to the front, or to drafts.' : word ? 'Say “' + word + '” to keep that day.' : 'Reword it so it still points to the right week.'),
+      fixes,
+      data: { from: was.toISOString(), to: now.toISOString(), meant: atOld, means: atNew }
+    });
+  }
+  return flags;
+}

@@ -22,14 +22,16 @@ const LINK_TTL = 10 * 60 * 1000;
 const SCAN_GAP_MS = 60000;
 const state = { raw: null, data: null, filter: 'flagged', notes: false, links: new Map(), linkQueue: [], linkRunning: false, busy: false, dialog: null, nextScanAt: 0,
   scanError: null, autoRetryUsed: false, ended: false, view: 'queue', back: null, backBusy: false, backError: null, backRetryAt: 0,
-  undos: new Map(), undoBar: null };
+  undos: new Map(), undoBar: null, shiftsEdited: new Map(),
+  /* after a queue reorder: post id -> the send time it had before (kept until the next scan or an edit of that post) */
+  shifts: new Map(), lastShift: null };
 /* seconds to wait after a refusal: the server's Retry-After, or a minute when there is none (never zero) */
 export const waitFor = (retryAfter) => Math.min(3600, Math.max(5, Math.ceil(Number(retryAfter) || 60)));
 
 /* run the checks on the current raw scan (after a scan, and after each fix) */
 function recompute() {
   if (!state.raw) { state.data = null; return; }
-  const res = runAll(state.raw.channels, state.raw.posts, new Date());
+  const res = runAll(state.raw.channels, state.raw.posts, new Date(), { shifts: new Map(Array.from(state.shifts, ([id, v]) => [id, v.from])) });
   state.data = Object.assign({}, state.raw, { posts: res.posts, meta: res.meta });
 }
 
@@ -235,6 +237,7 @@ function render() {
   if (d.truncated) q.append(el('div', { class: 'banner warn' }, 'Your queue is large, so this scan stopped at the first posts. Scan again after fixing these to see the rest.'));
   if (d.meta && d.meta.repeatsPartial) q.append(el('div', { class: 'banner warn' }, 'Your queue is large, so repeated posts were only partly checked.'));
   if (d.rateLow) q.append(el('div', { class: 'banner calm', role: 'status' }, el('strong', null, 'Heads up. '), 'Buffer’s shared request allowance for Last Look is nearly used for now, so the next scan may have to wait a few minutes. Your posts are safe either way.'));
+  if (state.lastShift) q.append(shiftBanner(d));
   if (!d.channels.length || !posts.length) {
     const noCh = !d.channels.length;
     q.append(el('div', { class: 'empty' }, el('h2', { text: noCh ? 'No channels connected in Buffer' : 'Your queue is empty' }),
@@ -265,6 +268,20 @@ function render() {
     q.append(sec);
   }
   if (!shown && state.filter === 'flagged') q.append(el('p', { class: 'muted' }, 'Nothing needs a look. Switch to “All posts” to see everything in the queue.'));
+}
+
+/* after a reorder: how many other posts Buffer gave a new time, and how many of them now say the wrong day */
+function shiftBanner(d) {
+  const ls = state.lastShift;
+  const ch = d.channels.find((c) => c.id === ls.channelId);
+  const name = ch ? (ch.displayName || ch.name) : 'this channel';
+  if (ls.error) return el('div', { class: 'banner calm', role: 'status' }, el('strong', null, 'Moved. '), 'Last Look could not read the queue again just now, so the new times of the other posts on ' + name + ' are not checked yet. Scan again in a minute.');
+  const ids = new Set(ls.ids.concat([ls.moved]));
+  const wrong = d.posts.filter((p) => ids.has(p.id) && flagsFor(p).some((f) => f.id === 'time.slot_shift'));
+  const n = ls.ids.length;
+  const lead = n ? 'Reordered. Buffer gave ' + plural(n, 'other post') + ' on ' + name + ' a new time. ' : 'Reordered. No other post on ' + name + ' changed time. ';
+  const tail = wrong.length ? plural(wrong.length, 'post') + ' now say' + (wrong.length === 1 ? 's' : '') + ' the wrong day: Last Look re-checked “tomorrow”, “tonight” and weekday words against each new slot.' : 'Last Look re-checked their day words against each new slot: they still point to the right days.';
+  return el('div', { class: 'banner ' + (wrong.length ? 'warn shift' : 'calm shift'), role: 'status', id: 'shift-banner' }, el('strong', null, lead), tail);
 }
 
 /* the flag cards, each with its suggested-text buttons (the same cards on a queue post and on your own post);
@@ -329,7 +346,7 @@ function renderPost(p, ch) {
     if (p.allowed && p.allowed.edit) actions.push(el('button', { type: 'button', class: 'btn btn-small', onclick: () => openEdit(p, ch, null, null) }, 'Edit text'));
     if (p.allowed && p.allowed.draft && (needed.has('draft') || state.filter === 'all' || flags.some((f) => f.severity === 'high'))) actions.push(el('button', { type: 'button', class: 'btn btn-small btn-quiet', onclick: () => openSimple(p, ch, 'draft') }, 'Move to drafts'));
     if (p.allowed && p.allowed.move && (needed.has('move:bottom') || state.filter === 'all')) actions.push(el('button', { type: 'button', class: 'btn btn-small btn-quiet', onclick: () => openSimple(p, ch, 'move', 'bottom') }, 'Move to end of queue'));
-    if (p.allowed && p.allowed.move && state.filter === 'all') actions.push(el('button', { type: 'button', class: 'btn btn-small btn-quiet', onclick: () => openSimple(p, ch, 'move', 'top') }, 'Move to front of queue'));
+    if (p.allowed && p.allowed.move && (needed.has('move:top') || state.filter === 'all')) actions.push(el('button', { type: 'button', class: 'btn btn-small btn-quiet', onclick: () => openSimple(p, ch, 'move', 'top') }, 'Move to front of queue'));
     if (p.thread && p.thread.length > 1) actions.push(el('span', { class: 'channel-sub' }, 'Threads are edited in Buffer.'));
   }
   if (actions.length) art.append(el('div', { class: 'fix-row' }, actions));
@@ -585,7 +602,7 @@ async function confirmDialog() {
     const before = raw.text || '';
     const body = { postId: raw.id, action: cfg.action, confirm: true, expectedHash: await sha256hex(before), ts: raw.pts, ptok: raw.ptok };
     if (cfg.action === 'edit') body.text = $('dlg-text').value;
-    if (cfg.action === 'move') body.position = cfg.position;
+    if (cfg.action === 'move') { body.position = cfg.position; if (cfg.channel && cfg.channel.orgId) body.orgId = cfg.channel.orgId; }
     const res = await backend.fix(body);
     closeDialog();
     if (cfg.action === 'edit' && res.undo && res.post) {
@@ -663,6 +680,16 @@ async function doUndo(postId) {
 /* replace the one post with Buffer's answer and re-run the checks locally */
 function applyFixResult(res) {
   if (!state.raw || !res || !res.post) return;
+  /* the send times before this change: a reorder moves every post between the two slots, and their day words are
+     then re-judged against what they meant at the slot they had (see checkSlotShift) */
+  const before = new Map(state.raw.posts.map((x) => [x.id, x.dueAt]));
+  if (res.action === 'edit' || res.action === 'undo') {
+    /* an edit is written for the post's current slot: its old slot no longer says what the words should mean.
+       Undo brings the old text back, so it also brings the reorder note back */
+    if (res.action === 'edit' && state.shifts.has(res.post.id)) state.shiftsEdited.set(res.post.id, state.shifts.get(res.post.id));
+    if (res.action === 'edit') state.shifts.delete(res.post.id);
+    if (res.action === 'undo' && state.shiftsEdited.has(res.post.id)) { state.shifts.set(res.post.id, state.shiftsEdited.get(res.post.id)); state.shiftsEdited.delete(res.post.id); }
+  }
   const i = state.raw.posts.findIndex((x) => x.id === res.post.id);
   const updated = Object.assign({}, res.post, { pts: res.ts });
   if (i >= 0) state.raw.posts[i] = updated; else state.raw.posts.push(updated);
@@ -672,6 +699,18 @@ function applyFixResult(res) {
     if (k >= 0) state.raw.posts[k] = Object.assign({}, sp, { pts: res.ts });
   }
   if (res.shifted && res.shifted.length) state.raw.posts.sort((a, b) => (Date.parse(a.dueAt) || Infinity) - (Date.parse(b.dueAt) || Infinity));
+  if (res.action === 'move') {
+    const moved = [];
+    for (const p of [res.post].concat(res.shifted || [])) {
+      const was = before.get(p.id);
+      if (!was || !p.dueAt || was === p.dueAt) continue;
+      const keep = state.shifts.get(p.id);
+      /* moved twice: the words still mean what they meant at the slot the user first saw */
+      if (keep && keep.from === p.dueAt) state.shifts.delete(p.id); else state.shifts.set(p.id, { from: keep ? keep.from : was, to: p.dueAt });
+      moved.push(p.id);
+    }
+    state.lastShift = { moved: res.post.id, channelId: res.post.channelId, ids: moved.filter((id) => id !== res.post.id), error: !!res.shiftedError };
+  }
   for (const l of res.links || []) if (!state.links.has(l.url)) state.linkQueue.push({ url: l.url, sig: l.sig, ts: res.ts });
   recompute();
   render();
@@ -840,6 +879,7 @@ async function doScan(quiet) {
     const d = await backend.scan();
     for (const p of d.posts) p.pts = d.ts;
     state.raw = d;
+    state.shifts.clear(); state.lastShift = null;
     state.scanError = null;
     state.autoRetryUsed = false;
     state.nextScanAt = MODE === 'try' ? 0 : Date.now() + SCAN_GAP_MS;

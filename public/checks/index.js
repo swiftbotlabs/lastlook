@@ -1,6 +1,6 @@
 /* Runs every check over a scanned queue. Pure: input is the shaped channels and posts, output is per-post flags
    plus the list of links the browser should ask /api/links to check. */
-import { checkTime, checkNight } from './time.js';
+import { checkTime, checkNight, checkSlotShift } from './time.js';
 import { checkFormatting } from './format.js';
 import { checkLength } from './length.js';
 import { checkDuplicates } from './dupes.js';
@@ -40,10 +40,13 @@ export function postLinks(post) {
   return out.slice(0, 25);
 }
 
-export function runChecks(channels, posts, now) { return runAll(channels, posts, now).posts; }
+export function runChecks(channels, posts, now, opts) { return runAll(channels, posts, now, opts).posts; }
 
-/* returns {posts, meta}; meta.repeatsPartial is true when the duplicate check hit its work cap */
-export function runAll(channels, posts, now) {
+/* returns {posts, meta}; meta.repeatsPartial is true when the duplicate check hit its work cap.
+   opts.shifts: Map post id -> the send time (ISO) the post had before a queue reorder moved it; those posts get
+   their day words re-judged at the new slot (time.slot_shift), which replaces the general queue-slot note. */
+export function runAll(channels, posts, now, opts) {
+  const shifts = (opts && opts.shifts) || null;
   const chMap = new Map(channels.map((c) => [c.id, c]));
   const live = posts.filter((p) => LIVE.has(p.status));
   const dupes = checkDuplicates(live, chMap);
@@ -53,6 +56,14 @@ export function runAll(channels, posts, now) {
     let flags = [];
     const run = (fn) => { try { flags = flags.concat(fn() || []); } catch (e) { flags.push({ check: 'internal', id: 'internal.error', severity: 'low', where: 'text', title: 'One check could not run on this post', detail: 'The other checks still ran.', fixes: [] }); } };
     run(() => checkTime(p, ch, now));
+    const from = shifts && shifts.get(p.id);
+    if (from) {
+      const moved = [];
+      run(() => { const f = checkSlotShift(p, ch, from); moved.push(...f); return f; });
+      /* the re-judged word replaces the general "day word in a queue slot" note for the same words */
+      const spans = moved.flatMap((f) => f.spans || []);
+      if (spans.length) flags = flags.filter((f) => !(f.id === 'time.relative_queue' && (f.spans || []).some(([a, b]) => spans.some(([c, d]) => a < d && c < b))));
+    }
     run(() => checkNight(p, ch));
     run(() => checkFormatting(p, ch));
     run(() => checkLength(p, ch));

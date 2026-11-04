@@ -12,7 +12,7 @@
      GET  /privacy, /about, /healthz
    Every POST needs the session cookie, a same-origin Origin header and the session's CSRF token.
    Every request that spends Buffer's per-app allowance or checks links asks the gate (src/gate.js) first. */
-import { gql, BufferError, Q_ACCOUNT, scanQuery, Q_POST, Q_LOOKBACK, M_EDIT_TEXT, M_TO_DRAFT, M_MOVE, shapePost, shapeSent, shapeChannel } from './buffer.js';
+import { gql, BufferError, Q_ACCOUNT, scanQuery, Q_POST, Q_LOOKBACK, Q_QUEUE, M_EDIT_TEXT, M_TO_DRAFT, M_MOVE, shapePost, shapeSent, shapeChannel } from './buffer.js';
 import { postLinks } from './checks/index.js';
 import { clearUrlCache } from './checks/text.js';
 import { checkLink, linkFlag, siteOf } from './net.js';
@@ -308,7 +308,7 @@ async function scan(env, s) {
         calls++;
         const r = await gql(token, scanQuery(page === 0), { org: org.id, first: PAGE, after });
         rate = r.rate;
-        if (page === 0) for (const c of (r.data.channels || []).slice(0, 100)) channels.push(Object.assign(shapeChannel(c), { org: org.name }));
+        if (page === 0) for (const c of (r.data.channels || []).slice(0, 100)) channels.push(Object.assign(shapeChannel(c), { org: org.name, orgId: org.id }));
         const conn = r.data.posts || {};
         for (const e of (conn.edges || [])) if (e && e.node) posts.push(shapePost(e.node));
         if (!conn.pageInfo || !conn.pageInfo.hasNextPage) break;
@@ -437,7 +437,15 @@ async function fix(env, s, body) {
     position = body.position === 'top' ? 'top' : body.position === 'bottom' ? 'bottom' : null;
     if (!position) return fail(400, 'bad_input', 'Pick top or bottom.');
   }
-  const adm = await ask(env, { op: 'admit', kind: 'fix', acct: s.record.acct, sk: s.sk, calls: 2 });
+  /* a reorder also re-reads the channel's queue afterwards (Buffer moves every post between the two slots), so the
+     organization must be one of this session's own */
+  let moveOrg = null;
+  if (action === 'move') {
+    const orgs = s.record.orgs || [];
+    const want = typeof body.orgId === 'string' ? body.orgId : '';
+    moveOrg = orgs.find((o) => o.id === want) || (orgs.length === 1 ? orgs[0] : null);
+  }
+  const adm = await ask(env, { op: 'admit', kind: 'fix', acct: s.record.acct, sk: s.sk, calls: action === 'move' && moveOrg ? 3 : 2 });
   if (!adm.ok) return refusal(adm);
   let rate = null; let used = 0;
   try {
@@ -488,8 +496,28 @@ async function fix(env, s, body) {
       const uts = Date.now();
       undo = { uts, until: uts + UNDO_MS, token: await undoToken(env, s.sid, uts, postId, await sha256hex(updated.text), expected) };
     }
+    /* after a reorder, read the channel's queue again: the page compares each post's new send time with the one it
+       had and re-checks the day words of every post that moved. The move already happened, so a failed read only
+       means no re-check (shiftedError), never a failed fix. */
+    let shifted = [];
+    let shiftedError = false;
+    if (action === 'move' && updated) {
+      if (!moveOrg) shiftedError = true;
+      else {
+        try {
+          used++;
+          const q = await gql(s.record.at, Q_QUEUE, { org: moveOrg.id, channel: updated.channelId });
+          rate = q.rate;
+          shifted = (((q.data && q.data.posts) || {}).edges || []).map((e) => e && e.node && shapePost(e.node)).filter((p) => p && p.id !== updated.id && p.channelId === updated.channelId).slice(0, 100);
+          if (shifted.length) newLinks = newLinks.concat(await tokensFor(env, s.sid, nts, shifted));
+        } catch (e) {
+          if (e instanceof BufferError && e.rate) rate = e.rate;
+          shifted = []; shiftedError = true;
+        }
+      }
+    }
     console.log(JSON.stringify({ ev: 'fix', action, ok: true }));
-    return json({ ok: true, action, post: updated, ts: nts, links: newLinks, undo });
+    return json({ ok: true, action, post: updated, ts: nts, links: newLinks, undo, shifted, shiftedError });
   } catch (e) {
     if (e instanceof BufferError && e.rate) rate = e.rate;
     throw e;
