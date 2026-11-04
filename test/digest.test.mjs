@@ -447,3 +447,19 @@ test('app tab: off by default with a turn-on link carrying the hour and zone; on
   assert.equal(reqs.filter((x) => x === 'off').length, 1);
   assert.equal(b.$('headline').textContent, 'Daily digest');
 });
+
+test('gate: a digest build is not held back by the user\'s own link check a minute ago; per-site limits still apply', async () => {
+  const env = makeEnv();
+  const core = env.GATE.obj.core;
+  const s = await signIn(env, 'acct-links');
+  const item = { h: 'a'.repeat(32), site: 'example.net' };
+  assert.deepEqual((await core.admitLinks(s.acct, s.sk, [item])).results, ['ok']);
+  assert.deepEqual((await core.admitLinks(s.acct, s.sk, [item])).results, ['recent'], 'positive control: the interactive path dedupes');
+  assert.deepEqual((await core.admitLinks(s.acct, null, [item], true)).results, ['ok'], 'the digest path does not');
+  const many = Array.from({ length: 10 }, (_, i) => ({ h: String(i).padStart(32, 'b'), site: 'busy.example' }));
+  await core.admitLinks(s.acct, null, many, true);
+  await core.admitLinks(s.acct, null, many, true);
+  const r = await core.admitLinks(s.acct, null, many, true);
+  assert.equal(r.results.filter((x) => x === 'site').length, 10, 'per-site cap of 20 a minute holds for digests');
+  assert.equal((await core.admitLinks(s.acct, null, [item], false)).ok, false, 'no session and not a digest: refused');
+});

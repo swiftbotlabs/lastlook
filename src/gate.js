@@ -255,7 +255,8 @@ export class GateCore {
     for (const it of items) {
       const key = acct + '|' + it.h;
       const last = this.recentUrls.get(key);
-      if (last && now - last < LIMITS.urlGapMs) { out.push('recent'); continue; }
+      /* a digest build runs once a day per account, so it is not held back by a check the user ran a minute ago */
+      if (!digest && last && now - last < LIMITS.urlGapMs) { out.push('recent'); continue; }
       if (a.links >= LIMITS.linksPerDay) { out.push('budget'); continue; }
       let s = this.sites.get(it.site);
       if (!s || s.reset < now) { s = { n: 0, reset: now + 60000 }; this.sites.set(it.site, s); }
