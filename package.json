@@ -12,5 +12,5 @@
   "devDependencies": {
     "wrangler": "4.151.1"
   },
-  "license": "UNLICENSED"
+  "license": "MIT"
 }

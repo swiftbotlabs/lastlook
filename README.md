@@ -6,6 +6,8 @@ Last Look connects to Buffer with OAuth, reads every scheduled post, post awaiti
 
 Live: https://lastlook.swiftbotlab.workers.dev · No-login demo: https://lastlook.swiftbotlab.workers.dev/try
 
+Built for [Buffer Commit 2026](https://buffer.com/api/commit) from 3 November 2026, inside the build window (28 October to 13 November). There was no earlier code: every commit in this repository is from the window. MIT licensed.
+
 ## Try it without connecting
 
 `/try` opens on **Your own post**: type or paste a post, pick a channel (X, LinkedIn, Bluesky, Threads, Instagram, Mastodon) and when it goes out (next Monday 09:30 in your time zone by default, in a queue slot or at a fixed time). As you type (150 ms after you stop), the same browser-side checks run on that one post: flagged words are marked, the flag cards and their fix buttons are the same as on a queue, and a fix opens the same edit dialog with its word diff (then Undo for two minutes). Three one-tap examples show a "Happy Friday" going out on a Monday, a "tomorrow" in a queue slot, and raw `**` on X. Links are listed as "will be opened on a real queue" and never fetched: the tab has no network code (`public/own.js`), input is capped at 3,000 characters, and the text is rendered as text nodes only.
@@ -34,9 +36,20 @@ After you connect, the Look back tab reads your most recent sent posts (up to 90
 - **Edit text**: a suggested version where one can be made (cleaned formatting, the right weekday, the right greeting, a fixed hashtag), or your own edit, with a live character count for the channel and a word-by-word diff. Only the text changes; the schedule stays.
 - **Move to drafts**: takes the post out of the schedule without losing it.
 - **Move in queue**: sends a queue-slot post to the front or the end of its channel's queue.
+- **Re-check after a reorder**: moving a post to the front or end of its queue keeps the channel's slots and changes the order, so Buffer gives every post in between a new send time. After a move, Last Look reads that channel's queue once more (one query), compares each post's new time with the one it had, and re-judges its day words against the day they meant at the old slot. "Our sale ends tomorrow", pushed from Thursday to Friday, now means Saturday: the flag says so and offers the word that keeps Friday ("today"). If that day has passed at the new time, it offers the front of the queue or drafts instead. A banner sums it up: "Reordered. Buffer gave 2 other posts a new time. 1 now says the wrong day." The same works on the /try sample.
 - **Undo** (two minutes after an edit): puts the previous text back. The edit's answer carries an undo token, an HMAC over the session, post id, time, the hash of the text Buffer now holds and the hash of the text the server re-read before editing. Undo re-reads the post and restores only if the post still holds exactly what Last Look wrote, and only to that previous text.
 
 Before any write, the server reads the post again and refuses if the text changed since the scan, if it goes out in the next three minutes, if it is a thread (edited in Buffer so all parts stay in step) or if Buffer does not allow the action for that account. Last Look never creates, publishes or deletes a post.
+
+## Daily digest (opt-in)
+
+A pre-flight check only helps if someone opens it. The **Daily digest** tab turns on, once a day at an hour you pick in your own time zone (07:00, 12:00, 17:00 or 20:00), a short list of what Last Look would fix in the posts going out before the end of the next day: on a private page and an Atom feed you can follow in Slack (`/feed subscribe <feed address>`), any feed reader, or an RSS-to-email service.
+
+- **Off by default.** Turning it on asks Buffer for a second, separate grant with read-only scopes, `account:read posts:read offline_access`: it can read the queue on its own once a day, and it cannot change, publish or delete anything. Fixes still happen in the app, after you confirm.
+- **One click off.** The button on the digest page (a POST from our own page; a GET of the off link only asks, so link previews in chat apps cannot turn it off) or in the app deletes the subscription, its stored token and every stored digest at once. Then the grant is revoked at Buffer: the refresh token is used once more after it was rotated, and Buffer answers a reused refresh token by revoking every token of that grant. It also switches itself off the same way when nobody opened the page or feed for 14 days, or when Buffer refuses the token (you removed Last Look in Buffer).
+- **What is stored**: the refresh token, AES-256-GCM encrypted under a key derived from the server secret and the digest's id, in one Durable Object, never sent to a browser; Buffer rotates it on every use and the new one is saved before the access token is used (one build at a time, in the one place that refreshes it). The last 7 digests (one a day): send time, channel name, the first 140 characters of each flagged post, the flags. The private address is stored as a SHA-256 index plus an encrypted copy that only the signed-in account owner can see again in the app.
+- **Opening the page or the feed never calls Buffer** and never opens a link: it reads storage only, so a feed reader polling every minute costs Buffer nothing. Reads are limited to 120 an hour per digest.
+- **Builds** run in the Durable Object, one digest per alarm (each with its own CPU budget): refresh, one query per organization (`posts` with `status: [scheduled, needs_approval]` and a `dueAt` window, first 40), the same checks as the app, and up to 4 links through the same SSRF-guarded checker. Each build is admitted by the gate with a wider margin of the app's allowance than anything a person is waiting for, and at most 4 builds per account a day inside the account's budget of Buffer requests. An hourly cron re-arms the alarm loop; `/healthz` returns 503 when 6 builds in a row fail on our side or builds are two hours overdue.
 
 ## How it uses the Buffer API
 
@@ -44,7 +57,8 @@ Before any write, the server reads the post again and refuses if the text change
 - `account { organizations }` once at sign-in.
 - One GraphQL request per scan page: `channels` and `posts(filter: { status: [scheduled, needs_approval, draft] }, sort: dueAt asc)` together, 100 posts per page, at most 3 requests per scan.
 - Look back: one request per organization (first two organizations): `channels` and `posts(filter: { status: [sent] }, sort: dueAt desc, first: 90)` with `sentAt` and `externalLink`. A query only; one per account every two minutes, six a day.
-- Fixes: `post(input: { id })` to re-read, then `editPost(input: { id, text })`, `editPost(input: { id, text, saveToDraft: true })` or `movePostInQueue(input: { id, position })`. The mutation returns the whole post, so the page updates that post without a new scan.
+- Fixes: `post(input: { id })` to re-read, then `editPost(input: { id, text })`, `editPost(input: { id, text, saveToDraft: true })` or `movePostInQueue(input: { id, position })`. The mutation returns the whole post, so the page updates that post without a new scan. After `movePostInQueue`, one more query reads the channel's queue (`posts(filter: { status: [scheduled], channelIds: [channel] })`) so the page can re-check every post that got a new slot.
+- Daily digest: OAuth with `account:read posts:read offline_access` (its own grant), `account { organizations }` once, then per day a refresh-token exchange and `channels` + `posts(filter: { status: [scheduled, needs_approval], dueAt: { start, end } })` per organization.
 - A Durable Object (`src/gate.js`) guards the per-app allowance: it records the `RateLimit` headers of every Buffer response and refuses new scans and fixes when fewer than 20 requests (15-minute window) or 150 (24-hour window) remain; sign-ins keep a smaller reserve. Per account: one scan a minute, 20 scans, 40 fixes, 300 link checks, 6 look-backs (one per 2 minutes) and 20 sign-ins a day, one live session at a time, and one budget of real Buffer requests across all of them: 15 per 15 minutes and 60 a day. A typical visit (sign-in 1 request, a scan 1-3, a look-back 1-2) takes 3-6 requests, inside the 10 per 15 minutes that each authorized user adds to the app's allowance; a heavy account can spend more than it adds (15 against 10 per 15 minutes, 60 against 25 a day), and the app-wide margins are what keep that from reaching everyone else.
 
 ## When Buffer says "not now"
@@ -55,14 +69,22 @@ Every limit (Buffer's 429, the app-wide allowance margin, per-account budgets, t
 
 ```
 npm ci                          # pinned wrangler (package-lock.json)
-ops/build.sh                    # copy the check modules to public/checks
-node --test test/*.test.mjs     # unit tests, offline (Buffer, DNS, KV and the Durable Object are mocked)
+npm test                        # copies the check modules to public/checks, then runs the unit tests offline
+                                # (Buffer, DNS, KV and both Durable Objects are mocked)
 node ops/ssrf_live_probe.mjs    # live-DNS check that private-resolving names are refused
-npx wrangler deploy             # with CLOUDFLARE_API_TOKEN in the environment
 ```
 
-Layout: `public/sample.js` (the /try sample and its local backend), `src/index.js` (routes, OAuth, scan, fixes), `src/gate.js` (Durable Object: sessions registry, allowance, budgets, link limits), `src/session.js` (encrypted sessions), `src/buffer.js` (GraphQL client and queries), `src/net.js` + `src/ip.js` (link checker and SSRF guard), `src/checks/*` (the checks), `src/pages.js` (server pages), `public/` (browser app and styles).
+## Run your own copy
 
-Runs on Cloudflare Workers with one KV namespace for sessions, one Durable Object class, the Workers rate-limiting binding (per IP) and `global_fetch_strictly_public`. Request logging is off. Worker secrets: `BUFFER_CLIENT_ID`, `BUFFER_CLIENT_SECRET`, `SESSION_SECRET`.
+1. **Buffer OAuth client.** In Buffer's developer settings, create a confidential client with the scopes `account:read`, `posts:read` and `posts:write`, the redirect URI `https://<your host>/oauth/callback` and your privacy page URL. The daily digest asks for `offline_access` on its own sign-in; no other client is needed.
+2. **Cloudflare.** `npx wrangler login` (or set `CLOUDFLARE_API_TOKEN`), then `npx wrangler kv namespace create SESSIONS` and put the id in `wrangler.toml`, together with your `account_id` and your own `namespace_id` values for the two rate limiters.
+3. **Your host name.** Replace `lastlook.swiftbotlab.workers.dev` with your host in `src/index.js` (`ORIGIN`, `SELF_HOST`), `src/digest.js` (`selfHost`), `src/pages.js` (feed ids) and the user agents in `src/net.js` and `src/buffer.js`.
+4. **Secrets** (never in a file): `npx wrangler secret put BUFFER_CLIENT_ID`, `npx wrangler secret put BUFFER_CLIENT_SECRET`, and `npx wrangler secret put SESSION_SECRET` with at least 32 random characters (for example `openssl rand -base64 48`). Changing `SESSION_SECRET` signs everyone out and makes stored digest tokens unreadable, which is the right move after a suspected leak.
+5. **Deploy**: `npm test && npx wrangler deploy`. The migrations create the `Gate` and `Digest` Durable Objects (SQLite-backed, available on the Workers free plan) and the hourly cron trigger.
+6. **Check**: `/healthz` answers `{"ok":true,...}`; sign in, scan, and try a fix on a test post with a custom time far in the future (Last Look never publishes, but a queue-slot post will go out at its slot unless the queue is paused).
+
+Layout: `public/sample.js` (the /try sample and its local backend), `src/index.js` (routes, OAuth, scan, fixes, digest pages), `src/gate.js` (Durable Object: sessions registry, allowance, budgets, link limits), `src/digest.js` (Durable Object: daily digest subscriptions, sealed tokens, builds, revocation), `src/session.js` (encrypted sessions), `src/buffer.js` (GraphQL client and queries), `src/net.js` + `src/ip.js` (link checker and SSRF guard), `src/checks/*` (the checks), `src/pages.js` (server pages), `public/` (browser app and styles).
+
+Runs on Cloudflare Workers with one KV namespace for sessions, two Durable Object classes (the gate and the digest), an hourly cron trigger, the Workers rate-limiting binding (per IP) and `global_fetch_strictly_public`. Request logging is off. Worker secrets: `BUFFER_CLIENT_ID`, `BUFFER_CLIENT_SECRET`, `SESSION_SECRET`.
 
 By Swift Bot Labs. Uses the Buffer API; not made by or affiliated with Buffer.
