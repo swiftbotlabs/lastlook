@@ -25,9 +25,22 @@ id = "87c3dab55170438f8e8ba7b5d96f4206"
 name = "GATE"
 class_name = "Gate"
 
+# The daily digest (opt-in): subscriptions, sealed read-only refresh tokens, the last 7 digests; one build per alarm
+[[durable_objects.bindings]]
+name = "DIGEST"
+class_name = "Digest"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Gate"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Digest"]
+
+# Wakes the digest's alarm loop every hour (a backstop: the alarms themselves persist)
+[triggers]
+crons = ["7 * * * *"]
 
 # Per-IP limits, checked before any session lookup (Workers rate limiting binding; period must be 10 or 60 s)
 [[ratelimits]]

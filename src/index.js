@@ -9,6 +9,11 @@
      POST /api/fix           edit text / move to drafts / move in queue / undo an edit, one post the scan returned, after confirm
      POST /api/disconnect    delete the session and its token
      GET  /try               the same app on a made-up sample queue (no session, no server or Buffer calls)
+     GET  /digest/start      turn on the daily digest: Buffer OAuth for a separate READ-ONLY grant with offline_access
+     GET  /digest/<id>       the private digest page; /digest/<id>/feed.xml its Atom feed (storage only, never Buffer)
+     GET  /digest/<id>/off   asks to confirm; POST /digest/<id>/off turns it off (deletes everything, revokes the grant)
+     POST /api/digest        status / off for the signed-in account
+     scheduled (cron)        wakes the digest's alarm loop (src/digest.js builds one digest per alarm)
      GET  /privacy, /about, /healthz
    Every POST needs the session cookie, a same-origin Origin header and the session's CSRF token.
    Every request that spends Buffer's per-app allowance or checks links asks the gate (src/gate.js) first. */
@@ -19,8 +24,11 @@ import { checkLink, linkFlag, siteOf } from './net.js';
 import { parseIP, formatIPv4, expandIPv6 } from './ip.js';
 import { gate } from './gate.js';
 import { createSession, readSession, deleteSession, deleteSessionByKey, setCookie, clearCookie, parseCookies, sealJSON, openJSON, randomToken, sha256, sha256hex, b64url, hmac, signer, safeEqual, SESSION_COOKIE, OAUTH_COOKIE } from './session.js';
-import { landingPage, appPage, tryPage, privacyPage, aboutPage, errorPage, retryHint } from './pages.js';
+import { landingPage, appPage, tryPage, privacyPage, aboutPage, errorPage, retryHint, digestPage, digestFeed, digestOffConfirm, digestOffDone } from './pages.js';
+import { digest, DIGEST_SCOPES, FEED_RE, validHour } from './digest.js';
+import { validTz } from './checks/time.js';
 export { Gate } from './gate.js';
+export { Digest } from './digest.js';
 
 export const ORIGIN = 'https://lastlook.swiftbotlab.workers.dev';
 const SELF_HOST = 'lastlook.swiftbotlab.workers.dev';
@@ -166,7 +174,7 @@ async function pkcePair() {
   const challenge = b64url(await sha256(verifier));
   return { verifier, challenge };
 }
-async function oauthStart(request, env) {
+async function oauthStart(request, env, url, kind) {
   if (await limited(env, 'RL_AUTH', await clientKey(request), 10)) return html(errorPage('Slow down', 'Too many sign-in attempts from your network. Wait a minute and try again.'), 429);
   if (!env.BUFFER_CLIENT_ID || !env.BUFFER_CLIENT_SECRET) return html(errorPage('Not configured', 'Last Look is not configured yet.'), 503);
   /* say "busy" now rather than after Buffer's consent screen; nothing is reserved here (the callback admits) */
@@ -175,12 +183,15 @@ async function oauthStart(request, env) {
   const { verifier, challenge } = await pkcePair();
   const nonce = randomToken(24);
   const state = nonce + '.' + (await hmac(env, 'oauth-state', nonce)).slice(0, 22);
-  const sealed = await sealJSON(env, 'oauth', 'lastlook-oauth-v1', { state, verifier, exp: Date.now() + 600000 });
+  const flow = { state, verifier, exp: Date.now() + 600000 };
+  /* the daily digest asks for its own grant: read-only scopes plus offline_access (a refresh token) */
+  if (kind === 'digest') Object.assign(flow, { kind: 'digest', hour: validHour(url.searchParams.get('hour')), tz: validTz(String(url.searchParams.get('tz') || '').slice(0, 64)) });
+  const sealed = await sealJSON(env, 'oauth', 'lastlook-oauth-v1', flow);
   const u = new URL(AUTHORIZE);
   u.searchParams.set('client_id', env.BUFFER_CLIENT_ID);
   u.searchParams.set('redirect_uri', REDIRECT_URI);
   u.searchParams.set('response_type', 'code');
-  u.searchParams.set('scope', SCOPES);
+  u.searchParams.set('scope', kind === 'digest' ? DIGEST_SCOPES : SCOPES);
   u.searchParams.set('state', state);
   u.searchParams.set('code_challenge', challenge);
   u.searchParams.set('code_challenge_method', 'S256');
@@ -234,6 +245,7 @@ async function oauthCallback(request, env, url, ctx) {
     return page('Sign-in failed', 'Could not reach Buffer to finish signing in. Try again.', 502);
   }
   if (!tok.access_token || tok.access_token.length > 8192) return page('Sign-in failed', 'Buffer returned an unexpected token.', 400);
+  if (flow.kind === 'digest') return digestCallback(env, flow, tok, page, clear);
   /* a real token: reserve the one request the account query spends, then make it */
   const adm = await ask(env, { op: 'admit', kind: 'signin', calls: 1 });
   if (!adm.ok) return page('A short pause', (adm.message || 'Last Look is busy right now.') + ' ' + retryHint(adm.retryAfter), 429, true);
@@ -266,6 +278,36 @@ async function oauthCallback(request, env, url, ctx) {
   if (bound.old) await later(ctx, deleteSessionByKey(env, bound.old));
   console.log(JSON.stringify({ ev: 'connected', replaced: !!bound.old }));
   return redirect('/', [...clear, setCookie(SESSION_COOKIE, sid, life)]);
+}
+
+/* the digest's own grant: keep only the refresh token (sealed in the digest store), never a session */
+async function digestCallback(env, flow, tok, page, clear) {
+  const scopes = String(tok.scope || '');
+  if (typeof tok.refresh_token !== 'string' || !tok.refresh_token || tok.refresh_token.length > 8192) return page('Digest not turned on', 'Buffer did not grant the long-lived read access the digest needs. Nothing was stored. Try again.', 400);
+  if (/posts:write/.test(scopes)) return page('Digest not turned on', 'Buffer granted more than the digest asked for, so Last Look stored nothing. Try again.', 400);
+  if (!env.DIGEST) return page('Not available', 'The daily digest is not available right now. Nothing was stored.', 503);
+  const adm = await ask(env, { op: 'admit', kind: 'signin', calls: 1 });
+  if (!adm.ok) return page('A short pause', (adm.message || 'Last Look is busy right now.') + ' ' + retryHint(adm.retryAfter), 429, true);
+  let acct;
+  try {
+    const r = await gql(tok.access_token, Q_ACCOUNT);
+    await noteRate(env, r.rate, adm.hold, 1);
+    acct = r.data && r.data.account;
+    if (!acct || !acct.id || !Array.isArray(acct.organizations)) throw new Error('no account');
+  } catch (e) {
+    await noteRate(env, e instanceof BufferError ? e.rate : null, adm.hold, 1);
+    return page('Digest not turned on', 'Connected, but Buffer would not show the account. Nothing was stored. Try again.', 502);
+  }
+  let res;
+  try {
+    res = await digest(env, {
+      op: 'subscribe', acct: await sha256hex('lastlook-account:' + String(acct.id)), rt: tok.refresh_token, tz: flow.tz, hour: flow.hour,
+      orgs: acct.organizations.slice(0, MAX_ORGS).map((o) => ({ id: String(o.id), name: String(o.name || '').slice(0, 80) }))
+    });
+  } catch (e) { res = { ok: false }; }
+  if (!res || !res.ok || !FEED_RE.test(String(res.ft || ''))) return page('Digest not turned on', (res && res.message) || 'Last Look could not save the digest. Nothing was stored. Try again later.', res && res.code === 'full' ? 503 : 429, true);
+  console.log(JSON.stringify({ ev: 'digest_on', replaced: !!res.replaced }));
+  return redirect('/digest/' + res.ft + '?new=1', clear);
 }
 
 /* ---------- tokens the scan hands out ---------- */
@@ -526,6 +568,61 @@ async function fix(env, s, body) {
   }
 }
 
+/* ---------- daily digest pages ---------- */
+const DIGEST_PATH = /^\/digest\/([A-Za-z0-9_-]{43})(\/feed\.xml|\/off)?$/;
+const FEED_HEADERS = { 'x-robots-tag': 'noindex, nofollow, noarchive' };
+async function digestRoute(request, env, url, path) {
+  const isPost = request.method === 'POST';
+  if (await limited(env, 'RL_IP', await clientKey(request), IP_LIMIT)) return html(errorPage('Slow down', 'Too many requests from your network. Wait a minute.'), 429, { 'retry-after': '60' });
+  const m = DIGEST_PATH.exec(path);
+  const gone = () => html(errorPage('No digest here', 'This digest is off, or the address is not complete. Turn it on again from Last Look.'), 404, FEED_HEADERS);
+  if (!m || !env.DIGEST) return gone();
+  const ft = m[1]; const sub = m[2] || '';
+  if (isPost) {
+    if (sub !== '/off') return fail(405, 'method', 'Method not allowed.');
+    /* a form on our own page: same-origin only (a cross-site form cannot turn someone's digest off) */
+    const origin = request.headers.get('origin');
+    if (origin !== ORIGIN && !(origin == null && request.headers.get('sec-fetch-site') === 'same-origin')) return html(errorPage('Not from Last Look', 'Use the button on your digest page to turn it off.'), 403, FEED_HEADERS);
+    const r = await digest(env, { op: 'off_feed', ft });
+    if (!r.ok) return gone();
+    console.log(JSON.stringify({ ev: 'digest_off', via: 'page' }));
+    return html(digestOffDone(), 200, FEED_HEADERS);
+  }
+  if (sub === '/off') {
+    /* link prefetchers and chat unfurlers open links: a GET only asks, the button does it */
+    const r = await digest(env, { op: 'read', ft });
+    if (!r.ok) return gone();
+    return html(digestOffConfirm(ft), 200, FEED_HEADERS);
+  }
+  const r = await digest(env, { op: 'read', ft });
+  if (!r.ok) {
+    if (r.code === 'slow_down') return html(errorPage('Slow down', 'This digest was opened very often in the last hour. Try again later.'), 429, Object.assign({ 'retry-after': String(r.retryAfter || 600) }, FEED_HEADERS));
+    return gone();
+  }
+  if (sub === '/feed.xml') {
+    return new Response(digestFeed({ ft, view: r.view, origin: ORIGIN }), { status: 200, headers: Object.assign({ 'content-type': 'application/atom+xml; charset=utf-8', 'cache-control': 'private, max-age=300', 'content-security-policy': "default-src 'none'; sandbox" }, SEC, FEED_HEADERS) });
+  }
+  return html(digestPage({ ft, view: r.view, origin: ORIGIN, welcome: url.searchParams.get('new') === '1' }), 200, FEED_HEADERS);
+}
+/* signed in: is the digest on for this account (and its private address), or turn it off */
+async function digestApi(env, s, body) {
+  if (!env.DIGEST) return fail(503, 'unavailable', 'The daily digest is not available right now.');
+  const op = body.op;
+  if (op === 'status') {
+    const r = await digest(env, { op: 'status', acct: s.record.acct });
+    if (!r.ok) return fail(503, 'unavailable', 'Could not read the digest settings. Try again.');
+    if (!r.on) return json({ ok: true, on: false });
+    const page = FEED_RE.test(String(r.ft || '')) ? ORIGIN + '/digest/' + r.ft : null;
+    return json({ ok: true, on: true, page, feed: page ? page + '/feed.xml' : null, tz: r.tz, hour: r.hour, lastBuilt: r.lastBuilt, nextAt: r.nextAt, last: r.last });
+  }
+  if (op === 'off') {
+    const r = await digest(env, { op: 'off_acct', acct: s.record.acct });
+    console.log(JSON.stringify({ ev: 'digest_off', via: 'app' }));
+    return json({ ok: !!r.ok, was: !!r.was });
+  }
+  return fail(400, 'bad_input', 'Unknown digest request.');
+}
+
 /* ---------- router ---------- */
 async function handle(request, env, ctx) {
   const url = new URL(request.url);
@@ -545,15 +642,24 @@ async function handle(request, env, ctx) {
       }
       return html(landingPage());
     }
-    if (path === '/oauth/start') return oauthStart(request, env);
+    if (path === '/oauth/start') return oauthStart(request, env, url, 'signin');
+    if (path === '/digest/start') return oauthStart(request, env, url, 'digest');
+    if (path.startsWith('/digest/')) return digestRoute(request, env, url, path);
     if (path === '/oauth/callback') return oauthCallback(request, env, url, ctx);
     if (path === '/try') return html(tryPage());
     if (path === '/privacy') return html(privacyPage());
     if (path === '/about') return html(aboutPage());
-    if (path === '/healthz') return json({ ok: true });
+    if (path === '/healthz') {
+      /* the digest loop's watchdog: failing after 6 builds in a row fail on our side, or when builds are 2 h overdue */
+      let d = null;
+      if (env.DIGEST) { try { d = await digest(env, { op: 'health' }); } catch (e) { d = { ok: false, error: 'unreachable' }; } }
+      const ok = !d || d.ok !== false;
+      return json({ ok, digest: d ? { ok: d.ok !== false, subs: d.subs, consecutiveFailures: d.consecutiveFailures, overdue: d.overdue, lastTick: d.lastTick, lastResult: d.lastResult } : null }, ok ? 200 : 503);
+    }
     return html(errorPage('Not found', 'There is nothing at this address.'), 404);
   }
   if (method !== 'POST') return fail(405, 'method', 'Method not allowed.');
+  if (path.startsWith('/digest/')) return digestRoute(request, env, url, path);
   if (!path.startsWith('/api/')) return fail(404, 'not_found', 'Not found.');
   /* per-IP limit first, before any session lookup */
   if (await limited(env, 'RL_IP', await clientKey(request), IP_LIMIT)) return fail(429, 'slow_down', 'Too many requests from your network. Wait a minute.', { 'retry-after': '60' });
@@ -567,6 +673,7 @@ async function handle(request, env, ctx) {
     if (path === '/api/lookback') return await lookback(env, s);
     if (path === '/api/links') return await links(env, s, body);
     if (path === '/api/fix') return await fix(env, s, body);
+    if (path === '/api/digest') return await digestApi(env, s, body);
     if (path === '/api/disconnect') {
       /* the gate refuses the session from this moment; the KV delete (a write that can take seconds) runs after the reply */
       await ask(env, { op: 'unbind', acct: s.record.acct, sk: s.sk });
@@ -581,6 +688,12 @@ async function handle(request, env, ctx) {
 }
 
 export default {
+  /* cron: make sure the digest's alarm loop is armed (alarms persist; this is the backstop) */
+  async scheduled(event, env, ctx) {
+    if (!env.DIGEST) return;
+    const p = digest(env, { op: 'tick' }).catch(() => null);
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(p); else await p;
+  },
   async fetch(request, env, ctx) {
     try { return await handle(request, env, ctx); } catch (e) {
       console.log(JSON.stringify({ ev: 'error', where: 'top', name: String(e && e.name || 'Error').slice(0, 40) }));

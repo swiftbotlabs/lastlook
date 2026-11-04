@@ -266,7 +266,8 @@ test('own post: /try serves the composer as static markup under the unchanged CS
   assert.match(html, /<input type="datetime-local" id="own-when"/);
   /* every script is an external same-origin module; no inline styles or event handler attributes */
   const scripts = html.match(/<script\b[^>]*>/g) || [];
-  assert.deepEqual(scripts, ['<script type="module" src="/app.js?v=20261104a">']);
+  assert.equal(scripts.length, 1);
+  assert.match(scripts[0], /^<script type="module" src="\/app\.js\?v=\d{8}[a-z]">$/);
   assert.ok(!/\sstyle=/i.test(html), 'inline style attribute');
   assert.ok(!/\son[a-z]+=/i.test(html), 'inline event handler');
   assert.equal(env.SESSIONS._m.size, 0);

@@ -38,6 +38,19 @@ export function fmtDay(p, withYearOf) {
   const s = DOW_SHORT[p.dow] + ' ' + p.d + ' ' + MON_SHORT[p.m - 1];
   return withYearOf != null && p.y !== withYearOf ? s + ' ' + p.y : s;
 }
+/* the instant of wall-clock time hh:mm on local day number n in zone tz (DST-safe to the minute) */
+export function zonedTime(n, hh, mm, tz) {
+  const zone = validTz(tz);
+  const { y, m, d } = fromDayNum(n);
+  let guess = Date.UTC(y, m - 1, d, hh, mm);
+  for (let i = 0; i < 4; i++) {
+    const p = localParts(new Date(guess), zone);
+    const diff = (p.day - n) * 1440 + (p.hour * 60 + p.min) - (hh * 60 + mm);
+    if (!diff) break;
+    guess -= diff * 60000;
+  }
+  return guess;
+}
 export const fmtTime = (p) => String(p.hour).padStart(2, '0') + ':' + String(p.min).padStart(2, '0');
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 

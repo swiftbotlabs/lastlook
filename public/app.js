@@ -24,7 +24,9 @@ const state = { raw: null, data: null, filter: 'flagged', notes: false, links: n
   scanError: null, autoRetryUsed: false, ended: false, view: 'queue', back: null, backBusy: false, backError: null, backRetryAt: 0,
   undos: new Map(), undoBar: null, shiftsEdited: new Map(),
   /* after a queue reorder: post id -> the send time it had before (kept until the next scan or an edit of that post) */
-  shifts: new Map(), lastShift: null };
+  shifts: new Map(), lastShift: null,
+  /* the daily digest tab (live only): its settings from /api/digest, which reads only the digest store */
+  digest: null, digestBusy: false, digestError: null, digestConfirm: false };
 /* seconds to wait after a refusal: the server's Retry-After, or a minute when there is none (never zero) */
 export const waitFor = (retryAfter) => Math.min(3600, Math.max(5, Math.ceil(Number(retryAfter) || 60)));
 
@@ -192,7 +194,9 @@ function render() {
   if (state.ended || state.view === 'own') return;
   $('rescan').hidden = state.view !== 'queue';
   $('links-status').hidden = state.view !== 'queue';
+  $('toolbar').hidden = state.view === 'digest';
   if (state.view === 'back') return renderBack();
+  if (state.view === 'digest') return renderDigest();
   const d = state.data;
   const q = $('queue');
   q.replaceChildren();
@@ -353,6 +357,66 @@ function renderPost(p, ch) {
   return art;
 }
 
+/* ---------- Daily digest (live only): opt-in, off by default ---------- */
+const DIGEST_HOURS = [7, 12, 17, 20];
+async function loadDigest() {
+  state.digestBusy = true; state.digestError = null;
+  render();
+  try { state.digest = await api('/api/digest', { op: 'status' }); } catch (e) { if (e.status === 401) return sessionEnded(); state.digestError = e; }
+  state.digestBusy = false;
+  if (state.view === 'digest') render();
+}
+function digestStartHref(hour) { return '/digest/start?hour=' + encodeURIComponent(String(hour)) + '&tz=' + encodeURIComponent(localZone()); }
+function renderDigest() {
+  const q = $('queue');
+  q.replaceChildren();
+  if (!state.digest) {
+    if (!state.digestBusy && !state.digestError) { loadDigest(); return; }
+    $('headline').textContent = 'Daily digest';
+    $('subline').textContent = state.digestError ? 'Could not read the digest settings.' : 'One moment…';
+    if (state.digestError) q.append(problemBanner(state.digestError), el('p', null, el('button', { type: 'button', class: 'btn', onclick: () => loadDigest() }, 'Try again')));
+    else q.append(skeleton());
+    return;
+  }
+  const d = state.digest;
+  const two = (h) => String(h).padStart(2, '0') + ':00';
+  if (!d.on) {
+    $('headline').textContent = 'Daily digest';
+    $('subline').textContent = 'Tomorrow’s catches every day, without opening Last Look. Off until you turn it on.';
+    let hour = 17;
+    const go = el('a', { class: 'btn btn-primary', id: 'digest-on', href: digestStartHref(hour) }, 'Turn on the daily digest');
+    const sel = el('select', { id: 'digest-hour', class: 'digest-hour', 'aria-label': 'Time of day' }, DIGEST_HOURS.map((h) => el('option', { value: String(h), selected: h === hour }, two(h))));
+    sel.addEventListener('change', () => { hour = Number(sel.value) || 17; go.setAttribute('href', digestStartHref(hour)); });
+    q.append(el('div', { class: 'digest-card' },
+      el('h2', { text: 'What you get' }),
+      el('ul', { class: 'digest-points' },
+        el('li', null, el('strong', null, 'Every day at the time you pick: '), 'the posts going out before the end of the next day that Last Look would fix, with the reason for each.'),
+        el('li', null, el('strong', null, 'Where you already look: '), 'a private page and a feed. Follow it in Slack (/feed subscribe), any feed reader, or an RSS-to-email service.'),
+        el('li', null, el('strong', null, 'Read-only: '), 'it asks Buffer for a separate connection that can read your queue and never change it. Fixes still happen here, after you confirm.'),
+        el('li', null, el('strong', null, 'One click off: '), 'turning it off deletes its Buffer access and every stored digest at once. It also turns itself off after 14 days nobody opens it.')),
+      el('div', { class: 'digest-row' }, el('label', { class: 'lbl', for: 'digest-hour' }, 'Every day at'), sel, el('span', { class: 'muted' }, localZone())),
+      el('div', { class: 'cta-row' }, go),
+      el('p', { class: 'muted digest-fine' }, 'Buffer asks you to approve the read-only connection. Stored: a sealed copy of its key, and the last 7 digests with the first 140 characters of each flagged post. See Privacy.')));
+    return;
+  }
+  $('headline').textContent = 'Daily digest is on';
+  $('subline').textContent = 'Every day at ' + two(d.hour) + ' (' + d.tz + ')' + (d.nextAt ? '. Next: ' + fmtWhen(new Date(d.nextAt).toISOString(), d.tz) + '.' : '.');
+  const last = d.last ? 'Latest: tomorrow (' + d.last.tomorrow + '), ' + (d.last.flagged ? plural(d.last.flagged, 'post') + ' to fix' : 'nothing to fix') + ' in ' + plural(d.last.scanned, 'post') + ' checked.' : 'The first digest is being built now.';
+  const off = el('button', { type: 'button', class: 'btn btn-danger', id: 'digest-off' }, state.digestConfirm ? 'Yes, turn it off' : 'Turn off');
+  off.addEventListener('click', async () => {
+    if (!state.digestConfirm) { state.digestConfirm = true; render(); return; }
+    off.disabled = true; off.textContent = 'Turning off…';
+    try { await api('/api/digest', { op: 'off' }); state.digest = { ok: true, on: false }; state.digestConfirm = false; toast('The digest is off. Its Buffer access and stored digests were deleted.'); }
+    catch (e) { if (e.status === 401) return sessionEnded(); toast(e.message, 6000); }
+    render();
+  });
+  q.append(el('div', { class: 'digest-card' },
+    el('p', { class: 'digest-last' }, last),
+    el('div', { class: 'cta-row' }, d.page ? el('a', { class: 'btn btn-primary', href: d.page, target: '_blank', rel: 'noopener noreferrer' }, 'Open the digest page') : null, off),
+    state.digestConfirm ? el('p', { class: 'muted' }, 'This deletes the digest’s Buffer access and every stored digest. Your posts are not touched.') : null,
+    d.feed ? el('div', { class: 'digest-feed' }, el('p', { class: 'lbl' }, 'Feed address (private: share it only with your team)'), el('code', { class: 'feed-url' }, d.feed), el('p', { class: 'muted' }, 'Slack: /feed subscribe followed by this address. Or add it to any feed reader or RSS-to-email service.')) : null));
+}
+
 /* ---------- Look back (read-only, sent posts) ---------- */
 const cardId = (p) => 'lb-' + String(p.id).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
 const snippet = (t, n) => { const x = String(t || '').replace(/\s+/g, ' ').trim(); return x.length > n ? x.slice(0, n - 1) + '…' : x; };
@@ -485,11 +549,12 @@ function renderSent(p, ch) {
    On /try the first tab is "Your own post" (no hash), the sample queue is #sample. */
 function setView(v, opts) {
   const load = !opts || opts.load !== false;
-  state.view = v === 'back' ? 'back' : v === 'own' && MODE === 'try' ? 'own' : 'queue';
+  state.view = v === 'back' ? 'back' : v === 'own' && MODE === 'try' ? 'own' : v === 'digest' && MODE === 'live' ? 'digest' : 'queue';
   if (MODE === 'try') $('v-own').setAttribute('aria-pressed', String(state.view === 'own'));
+  if (MODE === 'live') $('v-digest').setAttribute('aria-pressed', String(state.view === 'digest'));
   $('v-queue').setAttribute('aria-pressed', String(state.view === 'queue'));
   $('v-back').setAttribute('aria-pressed', String(state.view === 'back'));
-  try { history.replaceState(null, '', state.view === 'back' ? '#lookback' : state.view === 'queue' && MODE === 'try' ? '#sample' : location.pathname); } catch (e) { /* not important */ }
+  try { history.replaceState(null, '', state.view === 'back' ? '#lookback' : state.view === 'digest' ? '#digest' : state.view === 'queue' && MODE === 'try' ? '#sample' : location.pathname); } catch (e) { /* not important */ }
   if (MODE === 'try') {
     const mine = state.view === 'own';
     $('own').hidden = !mine;
@@ -1005,6 +1070,7 @@ async function init() {
   }
   $('v-queue').addEventListener('click', () => setView('queue'));
   $('v-back').addEventListener('click', () => setView('back'));
+  if (MODE === 'live') $('v-digest').addEventListener('click', () => { state.digest = null; setView('digest'); });
   $('f-flagged').addEventListener('click', () => setFilter('flagged'));
   $('f-all').addEventListener('click', () => setFilter('all'));
   $('f-notes').addEventListener('change', (e) => { state.notes = e.target.checked; render(); });
@@ -1032,6 +1098,7 @@ async function init() {
   if (MODE === 'try') initOwn();
   if (location.hash === '#lookback') setView('back', { load: MODE === 'try' });
   else if (MODE === 'try') setView(location.hash === '#sample' ? 'queue' : 'own');
+  else if (location.hash === '#digest') setView('digest');
   /* an in-page link to /try#sample or /try#lookback switches the tab without a reload */
   if (MODE === 'try' && typeof addEventListener === 'function') addEventListener('hashchange', () => setView(location.hash === '#lookback' ? 'back' : location.hash === '#sample' ? 'queue' : 'own'));
   doScan(false);

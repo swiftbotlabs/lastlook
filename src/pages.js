@@ -2,7 +2,7 @@
    the app page is a shell, and public/app.js builds the queue view with textContent. */
 
 export const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const V = '20261104a';
+const V = '20261104d';
 
 const LOGO = '<svg class="logo" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect x="1" y="1" width="30" height="30" rx="8" class="logo-bg"/><path d="M6 17.5c2.6-4.4 6-6.6 10-6.6s7.4 2.2 10 6.6c-2.6 4.4-6 6.6-10 6.6s-7.4-2.2-10-6.6z" class="logo-eye"/><circle cx="16" cy="17.5" r="3.4" class="logo-pupil"/><path d="M9 8.2h14" class="logo-line"/></svg>';
 
@@ -93,7 +93,8 @@ export function landingPage() {
       <li><strong>Move to drafts.</strong> Pull a post out of the schedule without losing it.</li>
       <li><strong>Move in the queue.</strong> Send a repeat to the back of the queue.</li>
     </ol>
-    <p class="note">Every change goes through Buffer’s own API, only when you press confirm, and only on the post you picked.</p>
+    <p class="note">Every change goes through Buffer’s own API, only when you press confirm, and only on the post you picked. Moved a post? Last Look re-checks every post the move pushed to a new time.</p>
+    <p class="note"><strong>Daily digest, if you want it:</strong> tomorrow’s catches every day at the hour you pick, on a private page and a feed for Slack, a feed reader or your inbox. Read-only, off until you turn it on, one click to turn off.</p>
     <p class="cta-row"><a class="btn btn-primary" href="/oauth/start">Connect Buffer</a><a class="btn" href="/try">Try it on your own post</a></p>
   </section>
 </main>`, {});
@@ -153,7 +154,8 @@ function appBody(o) {
   <div class="views" role="group" aria-label="View">${o.sample ? `
     <button type="button" class="view-tab" id="v-own" aria-pressed="true">Your own post</button>` : ''}
     <button type="button" class="view-tab" id="v-queue" aria-pressed="${o.sample ? 'false' : 'true'}">${o.sample ? 'Sample queue' : 'Your queue'}</button>
-    <button type="button" class="view-tab" id="v-back" aria-pressed="false">Look back</button>
+    <button type="button" class="view-tab" id="v-back" aria-pressed="false">Look back</button>${o.sample ? '' : `
+    <button type="button" class="view-tab" id="v-digest" aria-pressed="false">Daily digest</button>`}
   </div>${o.sample ? OWN : ''}${banner}
   <section class="summary" id="summary" aria-live="polite"${hide}>
     <div class="summary-main">
@@ -217,8 +219,9 @@ export function privacyPage() {
   <ul>
     <li><strong>account:read</strong>: your account id and display name, and your organizations and channels (name, network, time zone, avatar), so posts can be judged per channel.</li>
     <li><strong>posts:read</strong>: your scheduled posts, posts awaiting approval and drafts: text, scheduled time, attached media type and alt text, link previews and first comments. When you open <strong>Look back</strong>, also your most recent sent posts (up to 90): the same fields plus when each went out and the link to it on the network.</li>
-    <li><strong>posts:write</strong>: used only when you press a fix button and then confirm, or press Undo within two minutes of an edit. It edits that one post’s text, moves it to drafts, or moves it to the front or end of its queue. Last Look never creates, publishes or deletes posts.</li>
+    <li><strong>posts:write</strong>: used only when you press a fix button and then confirm, or press Undo within two minutes of an edit. It edits that one post’s text, moves it to drafts, or moves it to the front or end of its queue. After a move, it reads that channel’s queue once more, because Buffer gives every post between the two places a new time. Last Look never creates, publishes or deletes posts.</li>
   </ul>
+  <p>The <strong>daily digest</strong>, only if you turn it on, asks Buffer for a second, separate connection with <strong>account:read posts:read offline_access</strong>: it can read your queue on its own once a day, and it cannot change, publish or delete anything.</p>
 
   <h2>Where the checks run</h2>
   <p>Our server fetches your queue (and, for Look back, your recent sent posts) from Buffer and passes it straight to your browser. The checks themselves run in your browser tab. The server does not keep the posts after answering. Look back only reads: sent posts cannot be changed, and links in them are not opened.</p>
@@ -234,9 +237,19 @@ export function privacyPage() {
     <li><strong>In your browser</strong>: one cookie with the session id (HttpOnly, Secure, SameSite=Lax). During sign-in a second cookie lives for at most 10 minutes with one-time sign-in values.</li>
   </ul>
 
+  <h2>The daily digest (only if you turn it on)</h2>
+  <ul>
+    <li><strong>Its Buffer key</strong>: the long-lived refresh token of the digest’s read-only connection, encrypted (AES-256-GCM, under a key derived from our server secret and the digest’s own id) in one Cloudflare Durable Object. It never goes to a browser. Buffer replaces it each time it is used; the old one stops working. The short-lived access token it gives is used for that one daily read and not stored.</li>
+    <li><strong>The digests</strong>: the last 7 (one a day), each with the send time, channel name and the first 140 characters of each flagged post, plus the flags. Encrypted the same way. A post with nothing to fix is only counted.</li>
+    <li><strong>Settings</strong>: the hour you picked, your time zone, your organizations’ ids and names, a one-way hash of your Buffer account id, when the digest was last built and last opened.</li>
+    <li><strong>The private address</strong>: stored as a one-way hash, plus an encrypted copy so you can see it again in the app when signed in. Anyone who has the address can read the digest, so share it only with your team.</li>
+    <li><strong>Off</strong>: the button on the digest page or in the app deletes all of the above at once, and Last Look then revokes the connection at Buffer. It also switches itself off, the same way, if nobody opens the page or the feed for 14 days, or if you remove Last Look in your Buffer settings.</li>
+    <li>Opening the page or the feed reads only what is stored: it never calls Buffer and never opens a link. Up to 4 links in tomorrow’s posts are checked when the digest is built, the same way as below.</li>
+  </ul>
+
   <h2>What is not stored</h2>
   <ul>
-    <li>Post text, media, links in readable form, and check results are not written to any database, file or log.</li>
+    <li>Outside the daily digest (above), post text, media, links in readable form, and check results are not written to any database, file or log.</li>
     <li>No tracking, no ads, no third-party scripts. The page loads only from this site. Channel avatars load in your browser from Buffer’s image hosts (buffer-channel-avatars-bucket.s3.amazonaws.com, *.buffer.com, *.bufferapp.com); avatars hosted anywhere else are not shown.</li>
   </ul>
 
@@ -254,7 +267,7 @@ export function privacyPage() {
 
   <h2>Who runs it</h2>
   <p>Swift Bot Labs, contact <a href="mailto:swiftbotlabs@gmail.com">swiftbotlabs@gmail.com</a>. Last Look runs on Cloudflare Workers. It is not made by or affiliated with Buffer.</p>
-  <p class="muted">Last updated 4 November 2026.</p>
+  <p class="muted">Last updated 5 November 2026.</p>
 </main>`, {});
 }
 
@@ -278,8 +291,12 @@ export function aboutPage() {
   </ul>
   <h2>4. Fix</h2>
   <p>Each flag offers the fixes that make sense for it: edit the text (with a suggested version where one can be made, a live character count and a word-by-word view of the change), move the post to drafts, or move a queue post to the top or bottom of its queue. Nothing is saved until you confirm. Before saving, Last Look reads the post again and stops if it changed in Buffer since your scan, or if it goes out in the next three minutes. Threads are left to Buffer’s editor so every part stays in step. After a fix, that one post is updated on the page from Buffer’s answer and checked again; nothing else is re-read. After an edit, <strong>Undo</strong> stays available for two minutes: it reads the post again and puts the previous text back only if the post still holds exactly what Last Look wrote. Last Look never deletes a post.</p>
+  <h2>Reorders move more than one post</h2>
+  <p>Moving a post to the front or the end of its queue keeps the channel’s slots and changes the order, so every post in between gets a new send time. After a move, Last Look reads that channel’s queue again and re-checks the day words of every post that moved: a “tomorrow” that meant Tuesday at the old slot but now means Wednesday is flagged, with a one-click word that keeps Tuesday (“today”, a weekday, or a date). If the day has already passed at the new time, it offers the front of the queue or drafts instead.</p>
   <h2>5. Look back</h2>
   <p>After you connect, the Look back tab reads your most recent sent posts (up to 90, one request per organization) and runs the text checks on them, each judged at the moment it actually went out in its channel’s time zone: formatting that showed as raw text, posts longer than the network allows, leftover placeholders, the same post sent twice, day and time words that were wrong when it went out, and images sent without alt text. The result reads “Last Look would have caught N issues in your last M sent posts”, grouped by check, each linking to the post. It only reads: sent posts cannot be changed, and their links are not opened.</p>
+  <h2>6. Daily digest (opt-in)</h2>
+  <p>A pre-flight check only helps if someone opens it. Turn on the daily digest and, every day at the hour you pick, Last Look reads the posts going out before the end of the next day and lists what it would fix, on a private page and an Atom feed: follow it in Slack (<code>/feed subscribe</code>), any feed reader or an RSS-to-email service. It uses its own read-only Buffer connection, keeps the last 7 digests, and one click turns it off and deletes everything.</p>
   <h2>Limits</h2>
   <ul>
     <li>Up to 300 queued posts per scan (three requests to Buffer), one scan a minute, 20 scans and 40 fixes a day per account, and at most 15 Buffer requests per 15 minutes and 60 a day per account.</li>
@@ -306,4 +323,124 @@ export function retryHint(sec) {
   if (s <= 90) return 'Try again in about a minute.';
   if (s < 5400) return 'Try again in about ' + Math.round(s / 60) + ' minutes.';
   return 'Try again in about ' + Math.round(s / 3600) + ' hours.';
+}
+
+/* ---------- daily digest (src/digest.js): a private page and an Atom feed, both static (no script) ---------- */
+const SEV_WORDS = { high: 'Fix before it posts', medium: 'Worth a look' };
+
+const MON3 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/* "Wed 5 Nov, 17:02" in a zone (server side, no visitor clock) */
+export function stamp(ms, tz) {
+  try {
+    const o = {};
+    for (const p of new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', weekday: 'short', hourCycle: 'h23' }).formatToParts(new Date(ms))) o[p.type] = p.value;
+    return o.weekday + ' ' + Number(o.day) + ' ' + MON3[Number(o.month) - 1] + ', ' + String(Number(o.hour) % 24).padStart(2, '0') + ':' + o.minute;
+  } catch (e) { return new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'; }
+}
+
+export function digestTitle(e) {
+  if (!e.scanned) return 'Tomorrow (' + e.tomorrow + '): nothing queued to check';
+  if (!e.flagged) return 'Tomorrow (' + e.tomorrow + '): ' + (e.scanned === 1 ? 'the 1 post looks fine' : 'all ' + e.scanned + ' posts look fine');
+  return 'Tomorrow (' + e.tomorrow + '): ' + e.flagged + ' post' + (e.flagged === 1 ? '' : 's') + ' to fix before ' + (e.flagged === 1 ? 'it goes' : 'they go') + ' out';
+}
+function digestEntryHtml(e, origin) {
+  const posts = e.posts.map((p) => `
+      <article class="post digest-post">
+        <div class="post-meta"><span class="when">${esc(p.when)}</span><span class="badge">${esc(p.slot)}</span><span class="svc">${esc(p.ch)}</span></div>
+        <p class="post-text">${esc(p.excerpt)}</p>
+        <ul class="flags">${p.flags.map((f) => `<li class="flag ${f.s === 'high' ? 'sev-high' : 'sev-med'}"><span class="dot" aria-hidden="true"></span><div class="flag-body"><span class="sev">${esc(SEV_WORDS[f.s] || 'Worth a look')}</span><strong>${esc(f.t)}</strong><p>${esc(f.d)}</p></div></li>`).join('')}</ul>
+      </article>`).join('');
+  const l = e.links || { found: 0, checked: 0, skipped: 0 };
+  const facts = [
+    e.scanned ? 'Checked ' + e.scanned + ' post' + (e.scanned === 1 ? '' : 's') + ' going out before the end of ' + e.tomorrow : 'No posts are queued before the end of ' + e.tomorrow,
+    l.found ? l.checked + ' of ' + l.found + ' link' + (l.found === 1 ? '' : 's') + ' opened' + (l.found > l.checked ? ' (the rest are checked when you open Last Look)' : '') : null,
+    e.more ? 'more posts than one digest holds: open Last Look for the full queue' : null,
+    e.orgsSkipped ? e.orgsSkipped + ' more organization' + (e.orgsSkipped === 1 ? '' : 's') + ' not covered' : null,
+    'built ' + stamp(e.builtAt, e.tz)
+  ].filter(Boolean).join(' · ');
+  return `<p class="muted digest-facts">${esc(facts)}</p>${posts || `<p class="clear-line">✓ Nothing to fix in tomorrow’s queue.</p>`}
+      ${e.flagged ? `<p class="digest-go"><a class="btn btn-primary btn-small" href="${esc(origin)}/">Fix them in Last Look</a></p>` : ''}`;
+}
+export function digestPage(o) {
+  const v = o.view;
+  const base = o.origin + '/digest/' + o.ft;
+  const latest = v.entries[0];
+  const hourText = String(v.hour).padStart(2, '0') + ':00';
+  const welcome = o.welcome ? `
+  <div class="banner calm" role="status"><strong>Your daily digest is on.</strong> Every day at ${esc(hourText)} (${esc(v.tz)}) this page and its feed get the posts Last Look would fix before the end of the next day. Bookmark this page, or follow the feed below. The address is private: anyone with it can read the digest, so share it only with your team.</div>` : '';
+  const entries = v.entries.map((e, i) => `
+  <section class="digest-entry" aria-labelledby="d-${i}">
+    <h2 id="d-${i}">${esc(digestTitle(e))}</h2>
+    ${digestEntryHtml(e, o.origin)}
+  </section>`).join('');
+  return shell('Daily digest · Last Look', `
+<main id="main" class="digest">
+  <p class="eyebrow">Daily digest · private page</p>
+  <h1>${latest ? esc(digestTitle(latest)) : 'Your first digest is on its way'}</h1>
+  <p class="lead">Every day at ${esc(hourText)} (${esc(v.tz)}), Last Look reads what goes out before the end of the next day and lists what it would fix. ${v.nextAt ? 'Next one: ' + esc(stamp(v.nextAt, v.tz)) + '.' : ''}</p>${welcome}
+  ${latest ? '' : '<p class="muted">The first digest is built within a few minutes. Reload this page soon.</p>'}
+  ${entries}
+  <section class="digest-follow" aria-labelledby="follow-h">
+    <h2 id="follow-h">Get it where you already look</h2>
+    <p>Feed address: <code class="feed-url">${esc(base)}/feed.xml</code></p>
+    <ul>
+      <li><strong>Slack:</strong> in a channel, type <code>/feed subscribe ${esc(base)}/feed.xml</code></li>
+      <li><strong>A feed reader</strong> (Feedly, Inoreader, NetNewsWire): add the feed address.</li>
+      <li><strong>Email:</strong> any RSS-to-email service sends it to your inbox.</li>
+    </ul>
+    <p class="muted">Opening this page or the feed never calls Buffer and never opens a link. The digest has its own read-only Buffer connection: it can read your queue, never change it.</p>
+  </section>
+  <section class="digest-off" aria-labelledby="off-h">
+    <h2 id="off-h">Turn it off</h2>
+    <form method="post" action="/digest/${esc(o.ft)}/off"><button type="submit" class="btn btn-danger">Turn off the daily digest</button></form>
+    <p class="muted">One click: it deletes the digest’s Buffer access and every digest stored for you, at once. It also turns itself off if nobody opens this page or the feed for 14 days.</p>
+  </section>
+</main>`, { bodyClass: 'is-digest' });
+}
+export function digestOffConfirm(ft) {
+  return shell('Turn off the digest · Last Look', `
+<main id="main" class="prose narrow">
+  <h1>Turn off the daily digest?</h1>
+  <p class="lead">This deletes the digest’s Buffer access and every digest stored for you. Your Buffer posts are not touched.</p>
+  <form method="post" action="/digest/${esc(ft)}/off" class="cta-row"><button type="submit" class="btn btn-primary">Turn it off</button><a class="btn btn-quiet" href="/digest/${esc(ft)}">Keep it</a></form>
+</main>`, {});
+}
+export function digestOffDone() {
+  return shell('Digest is off · Last Look', `
+<main id="main" class="prose narrow">
+  <h1>The daily digest is off</h1>
+  <p class="lead">Its Buffer access was deleted and is being revoked at Buffer now; every stored digest is gone. Nothing in your Buffer queue was changed.</p>
+  <p class="cta-row"><a class="btn btn-primary" href="/">Back to Last Look</a></p>
+</main>`, {});
+}
+/* Atom feed: one entry per stored digest. Text content only (type="html" with escaped markup), no script. */
+export function digestFeed(o) {
+  const v = o.view;
+  const base = o.origin + '/digest/' + o.ft;
+  const idBase = 'tag:lastlook.swiftbotlab.workers.dev,2026:digest:' + v.id;
+  const iso = (ms) => new Date(ms).toISOString();
+  const updated = v.entries[0] ? v.entries[0].builtAt : (v.created || Date.now());
+  const entries = v.entries.map((e) => {
+    const body = '<p>' + esc(digestTitle(e)) + '</p>' + e.posts.map((p) => '<p><strong>' + esc(p.when) + ' · ' + esc(p.ch) + '</strong><br>' + esc(p.excerpt) + '</p><ul>' + p.flags.map((f) => '<li><strong>' + esc(f.t) + '</strong>: ' + esc(f.d) + '</li>').join('') + '</ul>').join('') +
+      '<p><a href="' + esc(o.origin) + '/">Fix them in Last Look</a> · <a href="' + esc(base) + '">Digest page</a> · <a href="' + esc(base) + '/off">Turn off this digest</a></p>';
+    return `
+  <entry>
+    <id>${esc(idBase + ':' + e.day)}</id>
+    <title>${esc(digestTitle(e))}</title>
+    <updated>${iso(e.builtAt)}</updated>
+    <link rel="alternate" type="text/html" href="${esc(base)}"/>
+    <content type="html">${esc(body)}</content>
+  </entry>`;
+  }).join('');
+  return `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>${esc(idBase)}</id>
+  <title>Last Look: tomorrow’s queue</title>
+  <subtitle>What Last Look would fix in your Buffer queue before it goes out</subtitle>
+  <updated>${iso(updated)}</updated>
+  <link rel="self" type="application/atom+xml" href="${esc(base)}/feed.xml"/>
+  <link rel="alternate" type="text/html" href="${esc(base)}"/>
+  <author><name>Last Look</name></author>${entries}
+</feed>
+`;
 }

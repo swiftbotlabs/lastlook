@@ -34,3 +34,23 @@ export async function signIn(env, account, extra) {
   if (r.old) await env.SESSIONS.delete('s:' + r.old);
   return { sid, sk, csrf: record.csrf, cookie: SESSION_COOKIE + '=' + sid, acct };
 }
+/* a Durable Object namespace with one real Digest instance over an in-memory store with alarms */
+export function doStorage() {
+  const m = new Map();
+  const st = {
+    _m: m, alarm: null,
+    get: async (k) => (m.has(k) ? structuredClone(m.get(k)) : undefined),
+    put: async (k, v) => { m.set(k, structuredClone(v)); },
+    delete: async (k) => m.delete(k),
+    setAlarm: async (t) => { st.alarm = t; },
+    getAlarm: async () => st.alarm
+  };
+  return st;
+}
+export async function digestNamespace(env) {
+  const { Digest } = await import('../src/digest.js');
+  const storage = doStorage();
+  const obj = new Digest({ storage }, env);
+  const ns = { obj, storage, calls: 0, idFromName: (n) => n, get: () => ({ fetch: async (url, init) => { ns.calls++; return obj.fetch(new Request(url, init)); } }) };
+  return ns;
+}

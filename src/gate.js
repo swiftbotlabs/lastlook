@@ -10,11 +10,14 @@
    - per-account budgets: one budget of real Buffer calls (15 per 15 minutes, 60 per UTC day, sign-ins included)
      on top of one scan per 60 s, 20 scans, 40 fixes, 300 link checks and 20 sign-ins per UTC day,
      10 fixes and 30 link batches per minute; one Look back per 2 minutes and 6 per day;
-   - link-check limits: one check per account per URL per 60 s, 20 checks per minute per target site across all users.
+   - link-check limits: one check per account per URL per 60 s, 20 checks per minute per target site across all users;
+   - the daily digest (src/digest.js, opt-in): its builds have no browser session, so they are admitted per account
+     (at most 4 a day, inside the same budget of real Buffer calls) and keep a wider margin of the app's allowance
+     than anything a person is waiting for.
    Nothing here holds post text, links in clear (URLs are hashed), tokens or session ids. */
 
 export const LIMITS = {
-  scanGapMs: 60000, lookbackGapMs: 120000,
+  scanGapMs: 60000, lookbackGapMs: 120000, digestsPerDay: 4,
   scansPerDay: 20, fixesPerDay: 40, linksPerDay: 300, signinsPerDay: 20, lookbacksPerDay: 6,
   fixesPerMin: 10, linkBatchesPerMin: 30,
   urlGapMs: 60000, sitePerMin: 20,
@@ -25,7 +28,7 @@ export const LIMITS = {
   /* sign-in attempts: one-time values are remembered for the OAuth cookie's lifetime, in 10-minute slots */
   nonceMs: 600000, noncesPerSlot: 2000,
   /* keep this many requests of Buffer's per-app allowance free (15-minute window, 24-hour window) */
-  margin: { scan: [20, 150], fix: [20, 150], lookback: [20, 150], signin: [5, 30] }
+  margin: { scan: [20, 150], fix: [20, 150], lookback: [20, 150], signin: [5, 30], digest: [30, 200] }
 };
 const W15 = 900, W24 = 86400;
 const W15_MS = W15 * 1000;
@@ -47,7 +50,7 @@ export class GateCore {
   async account(acct) {
     const a = (await this.storage.get('a:' + acct)) || {};
     const today = day(this.now());
-    if (a.day !== today) Object.assign(a, { day: today, scans: 0, fixes: 0, links: 0, signins: 0, lookbacks: 0, calls: 0 });
+    if (a.day !== today) Object.assign(a, { day: today, scans: 0, fixes: 0, links: 0, signins: 0, lookbacks: 0, calls: 0, digests: 0 });
     return a;
   }
   async saveAccount(acct, a) { await this.storage.put('a:' + acct, a); }
@@ -108,8 +111,10 @@ export class GateCore {
     if (!margin) return this.refuse('bad_op', 'Unknown operation.', 60);
     let a = null;
     if (op !== 'signin') {
+      if (!acct || typeof acct !== 'string') return this.refuse('bad_op', 'Unknown account.', 60);
       a = await this.account(acct);
-      if (!sk || a.sk !== sk) return this.refuse('replaced', 'This session was replaced by a newer sign-in or was disconnected.', 1);
+      /* digest builds run from the digest's own stored grant, with no browser session */
+      if (op !== 'digest' && (!sk || a.sk !== sk)) return this.refuse('replaced', 'This session was replaced by a newer sign-in or was disconnected.', 1);
     }
     const r15 = this.remaining(W15); const r24 = this.remaining(W24);
     if (r15 !== null && r15 - calls < margin[0]) return this.refuse('app_busy', 'Last Look is busy right now (Buffer’s request allowance for this app is nearly used). Try again in a few minutes.', (this.rate[W15].resetAt - now) / 1000);
@@ -123,6 +128,8 @@ export class GateCore {
       if ((a.lookbacks || 0) >= LIMITS.lookbacksPerDay) return this.refuse('lookback_budget', 'That is today’s limit of ' + LIMITS.lookbacksPerDay + ' look-backs for your account.', 3600);
     } else if (op === 'fix') {
       if (a.fixes >= LIMITS.fixesPerDay) return this.refuse('fix_budget', 'That is today’s limit of ' + LIMITS.fixesPerDay + ' fixes for your account.', 3600);
+    } else if (op === 'digest') {
+      if ((a.digests || 0) >= LIMITS.digestsPerDay) return this.refuse('digest_budget', 'That is today’s limit of digests for this account.', 3600);
     }
     /* then the account's budget of real Buffer calls */
     if (a) { const no = this.callRefusal(a, calls, now); if (no) return no; }
@@ -133,6 +140,7 @@ export class GateCore {
     if (op === 'scan') { a.scans++; a.lastScan = now; }
     else if (op === 'lookback') { a.lookbacks = (a.lookbacks || 0) + 1; a.lastLookback = now; }
     else if (op === 'fix') a.fixes++;
+    else if (op === 'digest') a.digests = (a.digests || 0) + 1;
     if (a) { this.spend(a, calls, now); await this.saveAccount(acct, a); }
     /* hold the calls so parallel requests cannot overshoot before this operation's Buffer reply is recorded */
     const id = 'h' + (++this.holdSeq);
@@ -236,10 +244,11 @@ export class GateCore {
     return { ok: true };
   }
   /* link checks: items [{h (url hash), site}] -> allowed flags */
-  async admitLinks(acct, sk, items) {
+  async admitLinks(acct, sk, items, digest) {
     const now = this.now();
+    if (!acct || typeof acct !== 'string') return this.refuse('bad_op', 'Unknown account.', 60);
     const a = await this.account(acct);
-    if (!sk || a.sk !== sk) return this.refuse('replaced', 'This session was replaced by a newer sign-in or was disconnected.', 1);
+    if (!digest && (!sk || a.sk !== sk)) return this.refuse('replaced', 'This session was replaced by a newer sign-in or was disconnected.', 1);
     const wait = this.perMinute(acct + '|links', LIMITS.linkBatchesPerMin);
     if (wait) return this.refuse('link_rate', 'Too many link checks at once.', wait);
     const out = [];
@@ -269,7 +278,7 @@ export class GateCore {
       case 'nonce': return this.useNonce(msg.h);
       case 'bind': return this.bind(msg.acct, msg.sk);
       case 'unbind': return this.unbind(msg.acct, msg.sk);
-      case 'links': return this.admitLinks(msg.acct, msg.sk, Array.isArray(msg.items) ? msg.items.slice(0, 10) : []);
+      case 'links': return this.admitLinks(msg.acct, msg.sk, Array.isArray(msg.items) ? msg.items.slice(0, 10) : [], msg.digest === true);
       default: return { ok: false, code: 'bad_op' };
     }
   }

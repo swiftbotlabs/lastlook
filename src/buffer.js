@@ -133,6 +133,14 @@ export const Q_LOOKBACK = `query LookBack($org: OrganizationId!, $first: Int!) {
   }
 }`;
 
+/* daily digest: the posts going out in a time window (scheduled or awaiting approval), with the channels (a query) */
+export const Q_DIGEST = `query Digest($org: OrganizationId!, $start: DateTime!, $end: DateTime!, $first: Int!) {
+  channels(input: { organizationId: $org }) { ${CHANNEL_FIELDS} }
+  posts(first: $first, input: { organizationId: $org, filter: { status: [scheduled, needs_approval], dueAt: { start: $start, end: $end } }, sort: [{ field: dueAt, direction: asc }] }) {
+    edges { node { ${POST_FIELDS} } }
+  }
+}`;
+
 /* after a reorder: the channel's queue-slot posts with their new send times (a query, one request) */
 export const Q_QUEUE = `query Queue($org: OrganizationId!, $channel: ChannelId!) {
   posts(first: 100, input: { organizationId: $org, filter: { status: [scheduled], channelIds: [$channel] }, sort: [{ field: dueAt, direction: asc }] }) {
