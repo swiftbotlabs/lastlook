@@ -119,7 +119,7 @@ test('sample page never touches the network: no fetch from the sample backend, a
   const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(app, /async function api\(path, body\) \{\n {2}if \(MODE === 'try'\) throw/);
   /* in try mode the backend is replaced before the first scan */
-  assert.match(app, /if \(MODE === 'try'\) \{\n\s+const \{ SampleBackend \} = await import\('\.\/sample\.js'\);/);
+  assert.match(app, /if \(MODE === 'try'\) \{\n\s+const \{ SampleBackend, SAMPLE_RULES \} = await import\('\.\/sample\.js'\);/);
 });
 
 test('/try page: served without a session, no CSRF token, clear banner, same CSP; landing and empty state link to it', async () => {

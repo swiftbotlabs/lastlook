@@ -3,10 +3,11 @@
    anyone before app.js loads) see the real flagged posts at once; with JavaScript on, the page hides this block
    (html.js, set by /boot.js before first paint) and the interactive app takes over.
    Pure: no network, no Buffer call, no session. Every value from the sample goes through esc(). */
-import { sampleQueue, sampleSent, SAMPLE_CHANNELS, SAMPLE_LINKS, SAMPLE_BRAND, SAMPLE_TZ } from '../public/sample.js';
+import { sampleQueue, sampleSent, SAMPLE_CHANNELS, SAMPLE_LINKS, SAMPLE_BRAND, SAMPLE_TZ, SAMPLE_RULES } from '../public/sample.js';
 import { runAll } from './checks/index.js';
 import { runLookback } from './checks/lookback.js';
 import { SERVICE_NAMES } from './checks/length.js';
+import { cleanRules, rulesSummary } from './checks/rules.js';
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const SEV_RANK = { high: 0, medium: 1, low: 2 };
@@ -104,7 +105,8 @@ function postHtml(p, ch, nowMs) {
 export function trySample(now) {
   const at = now || new Date();
   const nowMs = at.getTime();
-  const res = runAll(SAMPLE_CHANNELS, sampleQueue(at), at);
+  const rules = cleanRules(SAMPLE_RULES);
+  const res = runAll(SAMPLE_CHANNELS, sampleQueue(at), at, { rules });
   const posts = res.posts.slice().sort((a, b) => Date.parse(a.dueAt) - Date.parse(b.dueAt));
   const live = posts.filter((p) => p.status !== 'draft');
   const flagged = posts.filter((p) => flagsOf(p).some((f) => f.severity !== 'low'));
@@ -123,6 +125,7 @@ export function trySample(now) {
       + '<div class="channel-head"><span class="avatar-fallback" aria-hidden="true">' + esc(ch.name.slice(0, 1).toUpperCase()) + '</span>'
       + '<div><h3>' + esc(ch.displayName) + '</h3><div class="channel-sub">' + esc(svcName(ch.service) + ' · ' + ch.timezone) + '</div></div>'
       + '<span class="channel-count">' + esc(plural(list.length, 'post') + (shown.length ? ' · ' + shown.length + ' flagged' : '')) + '</span></div>'
+      + (rules[ch.id] ? '<p class="channel-rules"><span class="lbl">Channel rules</span> ' + esc(rulesSummary(rules[ch.id])) + '</p>' : '')
       + (shown.length ? shown.map((p) => postHtml(p, ch, nowMs)).join('') : '<p class="clear-line">✓ ' + (list.length === 1 ? 'This post looks good.' : 'All ' + list.length + ' posts look good.') + '</p>')
       + '</section>';
   }

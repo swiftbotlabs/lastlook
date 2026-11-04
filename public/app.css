@@ -291,3 +291,9 @@ html:not(.js) .is-try .views,html:not(.js) .is-try .own-grid{display:none}
 .ts-groups li{display:flex;justify-content:space-between;gap:10px;font-size:15px}
 .ts-groups strong{font-weight:600}
 .ts-foot{margin-top:22px}
+/* per-channel rules */
+.rules-btn{margin-left:0}
+.channel-rules{margin:-4px 0 0;font-size:14px;color:var(--muted);overflow-wrap:anywhere}
+.channel-rules .lbl{margin:0 6px 0 0;color:var(--ink)}
+.hint{font-size:13.5px}
+#rules-banned,#rules-required{min-height:88px;font-size:15px}

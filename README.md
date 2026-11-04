@@ -12,6 +12,8 @@ Built for [Buffer Commit 2026](https://buffer.com/api/commit) from 3 November 20
 
 `/try` opens on **Your own post**: type or paste a post, pick a channel (X, LinkedIn, Bluesky, Threads, Instagram, Mastodon) and when it goes out (next Monday 09:30 in your time zone by default, in a queue slot or at a fixed time). As you type (150 ms after you stop), the same browser-side checks run on that one post: flagged words are marked, the flag cards and their fix buttons are the same as on a queue, and a fix opens the same edit dialog with its word diff (then Undo for two minutes). Three one-tap examples show a "Happy Friday" going out on a Monday, a "tomorrow" in a queue slot, and raw `**` on X. Links are listed as "will be opened on a real queue" and never fetched: the tab has no network code (`public/own.js`), input is capped at 3,000 characters, and the text is rendered as text nodes only.
 
+Without JavaScript (or before the app loads), `/try` already shows the sample queue's results: the server runs the same check code on the sample at request time and sends them as plain, escaped HTML (`src/trystatic.js`). A one-line classic script in the head (`public/boot.js`) marks scripted pages before first paint, so that copy stays hidden when the interactive app takes over.
+
 The second tab, `/try#sample`, opens the same app on a sample queue: twelve posts from a made-up pottery studio on X, LinkedIn, Bluesky and Instagram, built relative to today so every check fires on any date. The page runs the same check code as the real app, and the edit (with diff and live count), move-to-drafts and queue-reorder fixes work on the sample. The sample's backend lives in the page (`public/sample.js`): it has no session, sends nothing to the server or to Buffer, and its link results are part of the sample (reserved `.example` domains, each flag identical to what the real checker produces for that result, held in step by a test).
 
 ## What it checks
@@ -24,8 +26,13 @@ The second tab, `/try#sample`, opens the same app on a sample queue: twelve post
 | Length | Each network's limit, counted the way that network counts it, following Buffer's published character limits (X weighted count with links as 23 and emoji as 2; Bluesky graphemes with shortened links; LinkedIn links as 24; Instagram line breaks as 2; Mastodon server limit; TikTok video limit; first comments). |
 | Repeats | The same or nearly the same text (word-level similarity of 80% or more) queued twice on one channel; identical text on another channel at a different time. |
 | Leftovers | Template placeholders ([link], {{first_name}}, TODO, lorem ipsum), images without alt text, hashtags cut short by a hyphen or apostrophe, a space after @ or #, unmatched brackets, too many hashtags. |
+| Your channel rules | Per channel, phrases to avoid (`sneak peek => first look` suggests the word to use instead) and tags or phrases every post must include (`#ad`, a brand tag; the first comment counts). Case-insensitive, whole words, links skipped, matched literally (never as a pattern). The fix swaps the word in or adds the missing tag. |
 
 Every rule is plain code that runs in the browser (`src/checks/`, copied to `public/checks/` by `ops/build.sh`). There is no AI model in the product, so the same post always gets the same answer.
+
+## Channel rules
+
+Each channel header has **Add rules**: a box of phrases this channel never uses, one per line (add `=> word` to suggest a replacement), and a box of tags or phrases every post on it must carry. Rules are cleaned and capped in `src/checks/rules.js` (20 phrases and 10 must-haves per channel, 2 to 60 characters each, control and invisible characters removed, unsafe ids such as `__proto__` refused) and saved in the browser's `localStorage` only: they are never sent to the server or to Buffer, so the daily digest (built on the server) does not use them yet. On `/try` the sample studio has its own rules (X: never "sneak peek", say "first look"; Instagram: always #littlekiln), kept in the tab.
 
 ## Look back
 

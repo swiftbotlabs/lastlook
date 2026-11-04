@@ -7,6 +7,7 @@
 import { lengthFor, limitFor, SERVICE_NAMES } from './checks/length.js';
 import { runAll } from './checks/index.js';
 import { runLookback } from './checks/lookback.js';
+import { cleanRules, parseRuleLines, rulesSummary, rulesCount, RULES_MAX } from './checks/rules.js';
 import { checkOwn, clipOwn, ownChannel, defaultWhen, parseWhen, localZone, dayWords, OWN_EXAMPLES, OWN_SERVICES, OWN_DEBOUNCE_MS, OWN_MAX } from './own.js';
 
 const $ = (id) => document.getElementById(id);
@@ -26,14 +27,17 @@ const state = { raw: null, data: null, filter: 'flagged', notes: false, links: n
   /* after a queue reorder: post id -> the send time it had before (kept until the next scan or an edit of that post) */
   shifts: new Map(), lastShift: null,
   /* the daily digest tab (live only): its settings from /api/digest, which reads only the digest store */
-  digest: null, digestBusy: false, digestError: null, digestConfirm: false };
+  digest: null, digestBusy: false, digestError: null, digestConfirm: false,
+  /* per-channel rules (avoid list, must-haves): kept in this browser only (localStorage), never sent anywhere;
+     on /try they are the sample's own and live only in the tab */
+  rules: Object.create(null), sampleRules: null, rulesFor: null };
 /* seconds to wait after a refusal: the server's Retry-After, or a minute when there is none (never zero) */
 export const waitFor = (retryAfter) => Math.min(3600, Math.max(5, Math.ceil(Number(retryAfter) || 60)));
 
 /* run the checks on the current raw scan (after a scan, and after each fix) */
 function recompute() {
   if (!state.raw) { state.data = null; return; }
-  const res = runAll(state.raw.channels, state.raw.posts, new Date(), { shifts: new Map(Array.from(state.shifts, ([id, v]) => [id, v.from])) });
+  const res = runAll(state.raw.channels, state.raw.posts, new Date(), { shifts: new Map(Array.from(state.shifts, ([id, v]) => [id, v.from])), rules: state.rules });
   state.data = Object.assign({}, state.raw, { posts: res.posts, meta: res.meta });
 }
 
@@ -262,9 +266,12 @@ function render() {
     const nFlag = list.filter((p) => flagsFor(p).some((f) => f.severity !== 'low')).length;
     const sec = el('section', { class: 'channel', 'aria-label': (ch.displayName || ch.name) + ' on ' + svcName(ch.service) });
     const avatar = ch.avatar ? el('img', { src: ch.avatar, alt: '', width: 34, height: 34, loading: 'lazy', referrerpolicy: 'no-referrer' }) : el('span', { class: 'avatar-fallback', 'aria-hidden': 'true' }, (ch.name || '?').slice(0, 1).toUpperCase());
+    const rs = state.rules[ch.id];
     sec.append(el('div', { class: 'channel-head' }, avatar,
       el('div', null, el('h2', { text: ch.displayName || ch.name }), el('div', { class: 'channel-sub' }, svcName(ch.service) + ' · ' + ch.timezone + (ch.isQueuePaused ? ' · queue paused' : '') + (ch.isDisconnected ? ' · disconnected' : ''))),
-      el('span', { class: 'channel-count' }, plural(list.length, 'post') + (nFlag ? ' · ' + nFlag + ' flagged' : ''))));
+      el('span', { class: 'channel-count' }, plural(list.length, 'post') + (nFlag ? ' · ' + nFlag + ' flagged' : '')),
+      el('button', { type: 'button', class: 'btn btn-small btn-quiet rules-btn', 'data-channel': ch.id, onclick: () => openRules(ch) }, rulesCount(rs) ? 'Rules · ' + rulesCount(rs) : 'Add rules')));
+    if (rs) sec.append(el('p', { class: 'channel-rules' }, el('span', { class: 'lbl' }, 'Channel rules'), ' ' + rulesSummary(rs)));
     if (!visible.length) {
       sec.append(el('p', { class: 'clear-line' }, '✓ ' + (list.length === 1 ? 'This post looks good.' : 'All ' + list.length + ' posts look good.')));
     }
@@ -588,6 +595,64 @@ export function diffTokens(a, b) {
   while (i < n) push('del', A[i++]);
   while (j < m) push('ins', B[j++]);
   return out;
+}
+
+/* ---------- per-channel rules: an avoid list and must-haves, checked on every post of that channel ---------- */
+const RULES_KEY = 'lastlook.rules.v1';
+function loadRules() {
+  if (MODE === 'try') return cleanRules(state.sampleRules);
+  try {
+    const raw = localStorage.getItem(RULES_KEY);
+    return raw && raw.length <= RULES_MAX.storeBytes ? cleanRules(JSON.parse(raw)) : cleanRules(null);
+  } catch (e) { return cleanRules(null); }
+}
+/* true when the browser kept them (on /try they stay in the tab on purpose) */
+function storeRules(rules) {
+  if (MODE === 'try') return true;
+  try {
+    const s = JSON.stringify(rules);
+    if (s.length > RULES_MAX.storeBytes) return false;
+    if (Object.keys(rules).length) localStorage.setItem(RULES_KEY, s); else localStorage.removeItem(RULES_KEY);
+    return true;
+  } catch (e) { return false; }
+}
+function openRules(ch) {
+  const r = state.rules[ch.id];
+  state.rulesFor = ch;
+  $('rules-title').textContent = 'Rules for ' + (ch.displayName || ch.name);
+  $('rules-banned').value = r ? r.banned.map((b) => b.phrase + (b.instead ? ' => ' + b.instead : '')).join('\n') : '';
+  $('rules-required').value = r ? r.required.join('\n') : '';
+  $('rules-error').hidden = true;
+  $('rules-where').textContent = T('Kept in this browser only: never sent to Last Look’s server or to Buffer. The daily digest does not use them yet.', 'Sample only: these rules live in this tab, like the sample.');
+  const dlg = $('rules-dlg');
+  if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+  setTimeout(() => $('rules-banned').focus(), 30);
+}
+function closeRules() {
+  const dlg = $('rules-dlg');
+  if (dlg.open) { if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open'); }
+  state.rulesFor = null;
+}
+function saveRules() {
+  const ch = state.rulesFor;
+  if (!ch) return;
+  const parsed = parseRuleLines($('rules-banned').value, $('rules-required').value);
+  if (parsed.errors.length) {
+    $('rules-error').textContent = parsed.errors.slice(0, 3).join(' ');
+    $('rules-error').hidden = false;
+    return;
+  }
+  const next = Object.assign(Object.create(null), state.rules);
+  next[ch.id] = { banned: parsed.banned, required: parsed.required };
+  const clean = cleanRules(next);
+  const kept = storeRules(clean);
+  state.rules = clean;
+  closeRules();
+  recompute();
+  render();
+  const n = state.data ? state.data.posts.filter((p) => p.channelId === ch.id && p.flags.some((f) => f.check === 'rules')).length : 0;
+  const name = ch.displayName || ch.name;
+  toast((clean[ch.id] ? 'Rules saved for ' + name + '. ' + (n ? plural(n, 'post') + ' on it break' + (n === 1 ? 's' : '') + ' them.' : 'Every post on it follows them.') : 'Rules cleared for ' + name + '.') + (kept ? '' : ' This browser does not keep site data, so they last until you leave the page.'), 5000);
 }
 
 /* ---------- dialogs ---------- */
@@ -1073,10 +1138,11 @@ async function init() {
   const plain = document.getElementById('try-static');
   if (plain && typeof plain.remove === 'function') plain.remove();
   if (MODE === 'try') {
-    const { SampleBackend } = await import('./sample.js');
+    const { SampleBackend, SAMPLE_RULES } = await import('./sample.js');
     const sample = new SampleBackend();
+    state.sampleRules = SAMPLE_RULES;
     backend = { scan: () => sample.scan(), checkLinks: (b) => sample.checkLinks(b), fix: (b) => sample.fix(b), lookback: () => sample.lookback() };
-    $('rescan').addEventListener('click', () => { sample.reset(); state.links.clear(); state.linkQueue = []; state.raw = null; state.data = null; doScan(false).then(() => toast('Sample reset.')); });
+    $('rescan').addEventListener('click', () => { sample.reset(); state.rules = loadRules(); state.links.clear(); state.linkQueue = []; state.raw = null; state.data = null; doScan(false).then(() => toast('Sample reset.')); });
   } else {
     $('rescan').addEventListener('click', () => doScan(false));
   }
@@ -1091,6 +1157,11 @@ async function init() {
   $('dlg-cancel').addEventListener('click', closeDialog);
   $('dlg').addEventListener('close', () => { state.dialog = null; });
   $('dlg-form').addEventListener('submit', (e) => e.preventDefault());
+  state.rules = loadRules();
+  $('rules-save').addEventListener('click', saveRules);
+  $('rules-cancel').addEventListener('click', closeRules);
+  $('rules-dlg').addEventListener('close', () => { state.rulesFor = null; });
+  $('rules-form').addEventListener('submit', (e) => e.preventDefault());
   if (MODE === 'live') {
     $('disconnect') && $('disconnect').addEventListener('click', async () => {
       const b = $('disconnect');

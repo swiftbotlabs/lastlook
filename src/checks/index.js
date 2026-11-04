@@ -6,6 +6,7 @@ import { checkLength } from './length.js';
 import { checkDuplicates } from './dupes.js';
 import { checkPlaceholders, checkAltText, checkTags } from './extra.js';
 import { findUrls, clipForChecks } from './text.js';
+import { checkRules } from './rules.js';
 
 export const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 };
 const LIVE = new Set(['scheduled', 'needs_approval']);
@@ -44,9 +45,11 @@ export function runChecks(channels, posts, now, opts) { return runAll(channels, 
 
 /* returns {posts, meta}; meta.repeatsPartial is true when the duplicate check hit its work cap.
    opts.shifts: Map post id -> the send time (ISO) the post had before a queue reorder moved it; those posts get
-   their day words re-judged at the new slot (time.slot_shift), which replaces the general queue-slot note. */
+   their day words re-judged at the new slot (time.slot_shift), which replaces the general queue-slot note.
+   opts.rules: the user's per-channel rules, cleaned by cleanRules() (rules.js): { channelId: { banned, required } }. */
 export function runAll(channels, posts, now, opts) {
   const shifts = (opts && opts.shifts) || null;
+  const rules = (opts && opts.rules) || null;
   const chMap = new Map(channels.map((c) => [c.id, c]));
   const live = posts.filter((p) => LIVE.has(p.status));
   const dupes = checkDuplicates(live, chMap);
@@ -71,6 +74,7 @@ export function runAll(channels, posts, now, opts) {
     run(() => checkPlaceholders(p));
     run(() => checkAltText(p));
     run(() => checkTags(p, ch));
+    if (rules && Object.prototype.hasOwnProperty.call(rules, p.channelId)) run(() => checkRules(p, ch, rules[p.channelId]));
     if (dupes.has(p.id)) flags = flags.concat(dupes.get(p.id));
     if (p.publishError) flags.push({ check: 'buffer', id: 'buffer.error', severity: 'high', where: 'text', title: 'Buffer reported a problem with this post', detail: p.publishError, fixes: [] });
     if (ch.isDisconnected) flags.push({ check: 'buffer', id: 'buffer.disconnected', severity: 'high', where: 'text', title: 'Channel is disconnected', detail: 'Buffer cannot post to this channel until you reconnect it in Buffer.', fixes: [] });

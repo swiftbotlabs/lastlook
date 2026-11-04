@@ -197,6 +197,24 @@ function appBody(o) {
     </div>
   </form>
 </dialog>
+<dialog id="rules-dlg" aria-labelledby="rules-title">
+  <form method="dialog" class="dlg-body" id="rules-form">
+    <h2 id="rules-title">Rules for this channel</h2>
+    <p class="muted">Last Look checks every post on this channel against them and offers the fix.</p>
+    <label for="rules-banned" class="lbl">Never say</label>
+    <p class="hint muted" id="rules-banned-hint">One phrase per line. To suggest a word instead, add =&gt; and the word: sneak peek =&gt; first look</p>
+    <textarea id="rules-banned" rows="4" maxlength="2000" spellcheck="false" aria-describedby="rules-banned-hint"></textarea>
+    <label for="rules-required" class="lbl">Every post includes</label>
+    <p class="hint muted" id="rules-required-hint">One tag or phrase per line, such as #ad or your brand tag. The first comment counts.</p>
+    <textarea id="rules-required" rows="3" maxlength="800" spellcheck="false" aria-describedby="rules-required-hint"></textarea>
+    <p class="dlg-error" id="rules-error" role="alert" hidden></p>
+    <p class="hint muted" id="rules-where"></p>
+    <div class="dlg-actions">
+      <button type="button" class="btn btn-quiet" id="rules-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="rules-save">Save rules</button>
+    </div>
+  </form>
+</dialog>
 <div class="undo-bar" id="undo-bar" role="status" aria-live="polite" hidden><span id="undo-msg"></span><button type="button" class="btn btn-small" id="undo-btn">Undo</button></div>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>`;
 }
@@ -239,7 +257,7 @@ export function privacyPage() {
     <li><strong>For one minute only</strong>: a hash of each link we checked for you (so the same link is not fetched twice within a minute) and, per linked website (for example “example.com”), how many checks it received in that minute across all users. Cloudflare’s rate limiter also counts requests per network for a minute, under a one-way hash of your IP address (for IPv6, of its /64 block); the address itself is not stored.</li>
     <li><strong>For at most 30 minutes</strong>: a one-way hash of each sign-in attempt’s one-time value, so the same sign-in response cannot be used twice.</li>
     <li><strong>App-wide</strong>: how many requests Buffer still allows this app, read from Buffer’s replies.</li>
-    <li><strong>In your browser</strong>: one cookie with the session id (HttpOnly, Secure, SameSite=Lax). During sign-in a second cookie lives for at most 10 minutes with one-time sign-in values.</li>
+    <li><strong>In your browser</strong>: one cookie with the session id (HttpOnly, Secure, SameSite=Lax). During sign-in a second cookie lives for at most 10 minutes with one-time sign-in values. Channel rules you set (phrases to avoid, tags every post needs) are saved in your browser’s local storage under your channels’ ids; they are never sent to our server or to Buffer, and clearing a channel’s rules or your site data removes them.</li>
   </ul>
 
   <h2>The daily digest (only if you turn it on)</h2>
@@ -293,6 +311,7 @@ export function aboutPage() {
     <li><strong>Length.</strong> Each network’s limit, counted the way that network counts, following Buffer’s published character limits: X 280 (25,000 on paid plans) with links as 23 and emoji as 2, Bluesky 300 counted as visible characters with links shortened, LinkedIn 3,000 with links as 24, Threads 500, Instagram 2,196 with line breaks as 2, Mastodon your server’s limit, and the rest.</li>
     <li><strong>Repeats.</strong> The same text, or text at least 80% alike, queued twice on one channel; and identical text on other channels at different times. On very large queues the near-match comparison stops early and says so.</li>
     <li><strong>Leftovers.</strong> Template placeholders ([link], {{first_name}}, TODO), images without alt text, hashtags cut short by a hyphen or apostrophe, a space after @ or #, unmatched brackets, too many hashtags, and posts landing between 1 and 5 a.m.</li>
+    <li><strong>Your channel rules.</strong> Per channel, set phrases to avoid (with a word to say instead, such as “sneak peek” =&gt; “first look”) and tags or phrases every post must include (#ad, your brand tag; the first comment counts). Matching ignores case, works on whole words and skips links. A post that breaks a rule gets the fix: the suggested word swapped in, or the missing tag added. Rules are saved in your browser only, so the daily digest does not use them yet.</li>
   </ul>
   <h2>4. Fix</h2>
   <p>Each flag offers the fixes that make sense for it: edit the text (with a suggested version where one can be made, a live character count and a word-by-word view of the change), move the post to drafts, or move a queue post to the top or bottom of its queue. Nothing is saved until you confirm. Before saving, Last Look reads the post again and stops if it changed in Buffer since your scan, or if it goes out in the next three minutes. Threads are left to Buffer’s editor so every part stays in step. After a fix, that one post is updated on the page from Buffer’s answer and checked again; nothing else is re-read. After an edit, <strong>Undo</strong> stays available for two minutes: it reads the post again and puts the previous text back only if the post still holds exactly what Last Look wrote. Last Look never deletes a post.</p>

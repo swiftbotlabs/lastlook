@@ -34,6 +34,13 @@ export const SAMPLE_CHANNELS = [
   { id: 'kiln-ig', name: 'littlekiln', displayName: 'Little Kiln (Instagram)', service: 'instagram', type: 'business', timezone: SAMPLE_TZ, avatar: null, isQueuePaused: false, isDisconnected: false, isLocked: false, metadata: { maxCharacters: null, subscriptionType: null } }
 ];
 
+/* the studio's own per-channel rules (editable on /try; they live only in the tab, like the sample): its X voice says
+   "first look", never "sneak peek", and every Instagram post carries the studio's tag */
+export const SAMPLE_RULES = {
+  'kiln-x': { banned: [{ phrase: 'sneak peek', instead: 'first look' }], required: [] },
+  'kiln-ig': { banned: [], required: ['#littlekiln'] }
+};
+
 const TAGS32 = '#pottery #ceramics #handmade #wheelthrown #stoneware #mugs #handmademugs #potterylove #ceramicart #clay #studiopottery #makersgonnamake #smallbatch #shopsmall #handmadeceramics #glaze #potterystudio #ceramicmug #coffeemug #tableware #kitchenware #homedecor #giftideas #craft #artisan #madebyhand #slowliving #potteryofinstagram #ceramicstudio #wheelthrowing #speckled #mugshot';
 const BOWLS = 'The new speckled bowls are out of the kiln. First pick goes fast, so come by the studio or grab one online.';
 
