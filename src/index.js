@@ -580,9 +580,12 @@ async function digestRoute(request, env, url, path) {
   const ft = m[1]; const sub = m[2] || '';
   if (isPost) {
     if (sub !== '/off') return fail(405, 'method', 'Method not allowed.');
-    /* a form on our own page: same-origin only (a cross-site form cannot turn someone's digest off) */
+    /* a form on our own page: same-origin only (a cross-site form cannot turn someone's digest off). Our pages send
+       Referrer-Policy: no-referrer, so a browser's form POST from them carries Origin "null"; then only the browser's
+       own Sec-Fetch-Site (which a page cannot set) can say it came from this site */
     const origin = request.headers.get('origin');
-    if (origin !== ORIGIN && !(origin == null && request.headers.get('sec-fetch-site') === 'same-origin')) return html(errorPage('Not from Last Look', 'Use the button on your digest page to turn it off.'), 403, FEED_HEADERS);
+    const sameSite = request.headers.get('sec-fetch-site') === 'same-origin';
+    if (origin !== ORIGIN && !((origin == null || origin === 'null') && sameSite)) return html(errorPage('Not from Last Look', 'Use the button on your digest page to turn it off.'), 403, FEED_HEADERS);
     const r = await digest(env, { op: 'off_feed', ft });
     if (!r.ok) return gone();
     console.log(JSON.stringify({ ev: 'digest_off', via: 'page' }));

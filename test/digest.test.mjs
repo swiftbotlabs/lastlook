@@ -20,7 +20,7 @@ test.beforeEach(() => { _resetLimits(); Date.now = realNow; });
 const RATE = (r15, r24) => ({ ratelimit: '"15m"; r=' + r15 + '; t=600, "24h"; r=' + r24 + '; t=80000', 'ratelimit-policy': '"15m"; q=110; w=900, "24h"; q=525; w=86400' });
 const jres = (obj, status, headers) => new Response(JSON.stringify(obj), { status: status || 200, headers: Object.assign({ 'content-type': 'application/json' }, headers || {}) });
 const get = (path, ip, headers) => new Request(ORIGIN + path, { headers: Object.assign({ 'cf-connecting-ip': ip || '198.51.100.4' }, headers || {}) });
-const form = (path, origin) => new Request(ORIGIN + path, { method: 'POST', headers: Object.assign({ 'content-type': 'application/x-www-form-urlencoded', 'cf-connecting-ip': '198.51.100.4' }, origin === undefined ? { origin: ORIGIN } : origin === null ? {} : { origin }), body: '' });
+const form = (path, origin, extra) => new Request(ORIGIN + path, { method: 'POST', headers: Object.assign({ 'content-type': 'application/x-www-form-urlencoded', 'cf-connecting-ip': '198.51.100.4' }, origin === undefined ? { origin: ORIGIN } : origin === null ? {} : { origin }, extra || {}), body: '' });
 const api = (path, s, body) => new Request(ORIGIN + path, { method: 'POST', headers: { origin: ORIGIN, 'content-type': 'application/json', cookie: s.cookie, 'x-csrf-token': s.csrf, 'cf-connecting-ip': '198.51.100.4' }, body: JSON.stringify(body) });
 
 /* a fake Buffer: one grant per authorization code, refresh tokens rotate, an old one coming back revokes the grant */
@@ -213,8 +213,14 @@ test('off from the page: one POST deletes the token and every digest at once, th
   /* a cross-site form cannot turn it off */
   assert.equal((await worker.fetch(form('/digest/' + ft + '/off', 'https://evil.example'), env)).status, 403);
   assert.equal((await worker.fetch(form('/digest/' + ft + '/off', null), env)).status, 403);
+  /* the page sends Referrer-Policy: no-referrer, so Chrome's form POST carries the literal Origin "null": only a
+     same-origin fetch site may pass with it; an opaque origin from another site (sandboxed frame, data: page) may not */
+  assert.equal((await worker.fetch(form('/digest/' + ft + '/off', 'null'), env)).status, 403);
+  assert.equal((await worker.fetch(form('/digest/' + ft + '/off', 'null', { 'sec-fetch-site': 'cross-site' }), env)).status, 403);
+  assert.equal((await worker.fetch(form('/digest/' + ft + '/off', 'https://evil.example', { 'sec-fetch-site': 'same-origin' }), env)).status, 403);
   assert.equal((await worker.fetch(get('/digest/' + ft), env)).status, 200, 'still on after refused POSTs');
-  const r = await worker.fetch(form('/digest/' + ft + '/off'), env);
+  /* what Chrome really sends when the button on the page is pressed (seen live 2026-11-04: it was refused before) */
+  const r = await worker.fetch(form('/digest/' + ft + '/off', 'null', { 'sec-fetch-site': 'same-origin' }), env);
   assert.equal(r.status, 200);
   assert.match(await r.text(), /The daily digest is off/);
   const keys = [...env.DIGEST.storage._m.keys()];
