@@ -2,10 +2,12 @@
    the server tests. The view is built with DOM nodes and textContent only: post text is third-party content and
    is never parsed as HTML. After a fix, only that post is updated from Buffer's answer; nothing is rescanned.
    Two modes, one code path: on /try (meta mode=try) the backend is the local sample (./sample.js) and api()
-   refuses to run, so the sample page never calls the server, Buffer or the link checker. */
+   refuses to run, so the sample page never calls the server, Buffer or the link checker. /try also has a first
+   tab, "Your own post": one post the visitor types, checked in the tab (./own.js), with no network code at all. */
 import { lengthFor, limitFor, SERVICE_NAMES } from './checks/length.js';
 import { runAll } from './checks/index.js';
 import { runLookback } from './checks/lookback.js';
+import { checkOwn, clipOwn, ownChannel, defaultWhen, parseWhen, localZone, dayWords, OWN_EXAMPLES, OWN_SERVICES, OWN_DEBOUNCE_MS, OWN_MAX } from './own.js';
 
 const $ = (id) => document.getElementById(id);
 const meta = (n) => { if (typeof document === 'undefined') return ''; const m = document.querySelector('meta[name="' + n + '"]'); return m ? m.getAttribute('content') : ''; };
@@ -185,7 +187,7 @@ const skeleton = () => el('div', { class: 'skeleton', 'aria-hidden': 'true' }, e
 
 /* ---------- rendering ---------- */
 function render() {
-  if (state.ended) return;
+  if (state.ended || state.view === 'own') return;
   $('rescan').hidden = state.view !== 'queue';
   $('links-status').hidden = state.view !== 'queue';
   if (state.view === 'back') return renderBack();
@@ -207,7 +209,7 @@ function render() {
       el('p', { text: 'Look back at what already went out, or see what Last Look catches on a sample queue.' }),
       el('div', { class: 'cta-row center' },
         MODE === 'live' ? el('button', { type: 'button', class: 'btn', onclick: () => setView('back') }, 'Look back at sent posts') : null,
-        el('a', { class: 'btn', href: '/try' }, 'See a sample queue'))));
+        el('a', { class: 'btn', href: '/try#sample' }, 'See a sample queue'))));
     return;
   }
   if (state.scanError) q.append(problemBanner(state.scanError));
@@ -239,7 +241,7 @@ function render() {
       el('p', { text: noCh ? 'Last Look checks posts queued in Buffer. Add a channel there first, or see what it catches on a sample queue.' : 'Nothing is waiting to go out, so there is nothing to check yet. Look back at what already went out to see what Last Look would have caught, or try it on a sample queue.' }),
       el('div', { class: 'cta-row center' },
         noCh ? null : el('button', { type: 'button', class: 'btn btn-primary', onclick: () => setView('back') }, 'Look back at sent posts'),
-        el('a', { class: 'btn', href: '/try' }, 'See a sample queue'),
+        el('a', { class: 'btn', href: '/try#sample' }, 'See a sample queue'),
         el('a', { class: noCh ? 'btn btn-primary' : 'btn btn-quiet', href: 'https://publish.buffer.com', rel: 'noopener noreferrer', target: '_blank' }, 'Open Buffer'))));
     return;
   }
@@ -263,6 +265,24 @@ function render() {
     q.append(sec);
   }
   if (!shown && state.filter === 'flagged') q.append(el('p', { class: 'muted' }, 'Nothing needs a look. Switch to “All posts” to see everything in the queue.'));
+}
+
+/* the flag cards, each with its suggested-text buttons (the same cards on a queue post and on your own post);
+   extra(f, hasSuggestion) may return one more button for a card */
+function flagList(p, flags, onSuggest, extra) {
+  const ul = el('ul', { class: 'flags' });
+  const seenSugg = new Set();
+  for (const f of flags) {
+    const body = el('div', { class: 'flag-body' }, el('span', { class: 'sev' }, SEV_WORD[f.severity]), el('strong', null, f.title), el('p', null, f.detail));
+    const sugg = (f.fixes || []).filter((x) => x.type === 'edit' && typeof x.text === 'string' && x.text !== p.text && !seenSugg.has(x.text));
+    for (const x of sugg) seenSugg.add(x.text);
+    const btns = sugg.map((x) => el('button', { type: 'button', class: 'btn btn-small', onclick: () => onSuggest(x) }, x.label || 'Apply suggestion'));
+    const more = extra ? extra(f, sugg.length > 0) : null;
+    if (more) btns.push(more);
+    if (btns.length) body.append(el('div', { class: 'fix-row' }, btns));
+    ul.append(el('li', { class: 'flag ' + SEV_CLASS[f.severity] }, el('span', { class: 'dot', 'aria-hidden': 'true' }), body));
+  }
+  return ul;
 }
 
 function renderPost(p, ch) {
@@ -298,18 +318,7 @@ function renderPost(p, ch) {
   const pend = pendingLinks(p);
   if (pend) extras.push('checking ' + plural(pend, 'link') + '…');
   if (extras.length) art.append(el('p', { class: 'channel-sub' }, extras.join(' · ')));
-  if (flags.length) {
-    const ul = el('ul', { class: 'flags' });
-    const seenSugg = new Set();
-    for (const f of flags) {
-      const body = el('div', { class: 'flag-body' }, el('span', { class: 'sev' }, SEV_WORD[f.severity]), el('strong', null, f.title), el('p', null, f.detail));
-      const sugg = (f.fixes || []).filter((x) => x.type === 'edit' && typeof x.text === 'string' && x.text !== p.text && !seenSugg.has(x.text));
-      for (const x of sugg) seenSugg.add(x.text);
-      if (sugg.length) body.append(el('div', { class: 'fix-row' }, sugg.map((x) => el('button', { type: 'button', class: 'btn btn-small', onclick: () => openEdit(p, ch, x.text, x.label) }, x.label || 'Apply suggestion'))));
-      ul.append(el('li', { class: 'flag ' + SEV_CLASS[f.severity] }, el('span', { class: 'dot', 'aria-hidden': 'true' }), body));
-    }
-    art.append(ul);
-  }
+  if (flags.length) art.append(flagList(p, flags, (x) => openEdit(p, ch, x.text, x.label)));
   if (hiddenNotes > 0 && !state.notes) art.append(el('p', { class: 'channel-sub' }, plural(hiddenNotes, 'note') + ' hidden'));
   /* general actions for posts with something to fix */
   const actions = [];
@@ -398,7 +407,7 @@ function renderBack() {
   if (!t.checked) {
     $('headline').textContent = 'No sent posts yet';
     $('subline').textContent = 'Once Buffer has sent posts for you, Look back checks them here.';
-    q.append(el('div', { class: 'empty' }, el('h2', { text: 'Nothing to look back on' }), el('p', { text: 'Meanwhile, see what Last Look catches on a sample queue.' }), el('a', { class: 'btn', href: '/try' }, 'See a sample queue')));
+    q.append(el('div', { class: 'empty' }, el('h2', { text: 'Nothing to look back on' }), el('p', { text: 'Meanwhile, see what Last Look catches on a sample queue.' }), el('a', { class: 'btn', href: '/try#sample' }, 'See a sample queue')));
     return;
   }
   $('headline').textContent = t.issues ? 'Last Look would have caught ' + plural(t.issues, 'issue') + ' in your last ' + plural(t.checked, 'sent post') : 'Nothing to catch in your last ' + plural(t.checked, 'sent post');
@@ -455,13 +464,22 @@ function renderSent(p, ch) {
   }
   return art;
 }
-/* a tab click reads at once, except while a refusal's countdown runs; opening from a link (load: false) waits for a click */
+/* a tab click reads at once, except while a refusal's countdown runs; opening from a link (load: false) waits for a click.
+   On /try the first tab is "Your own post" (no hash), the sample queue is #sample. */
 function setView(v, opts) {
   const load = !opts || opts.load !== false;
-  state.view = v === 'back' ? 'back' : 'queue';
+  state.view = v === 'back' ? 'back' : v === 'own' && MODE === 'try' ? 'own' : 'queue';
+  if (MODE === 'try') $('v-own').setAttribute('aria-pressed', String(state.view === 'own'));
   $('v-queue').setAttribute('aria-pressed', String(state.view === 'queue'));
   $('v-back').setAttribute('aria-pressed', String(state.view === 'back'));
-  try { history.replaceState(null, '', state.view === 'back' ? '#lookback' : location.pathname); } catch (e) { /* not important */ }
+  try { history.replaceState(null, '', state.view === 'back' ? '#lookback' : state.view === 'queue' && MODE === 'try' ? '#sample' : location.pathname); } catch (e) { /* not important */ }
+  if (MODE === 'try') {
+    const mine = state.view === 'own';
+    $('own').hidden = !mine;
+    for (const id of ['try-banner', 'summary', 'toolbar', 'queue', 'session-note']) $(id).hidden = mine;
+  }
+  showUndoBar();
+  if (state.view === 'own') return;
   if (state.view === 'back' && load && !state.back && !state.backBusy && Date.now() >= state.backRetryAt) { loadBack(); return; }
   render();
   if (state.view === 'queue' && state.data) $('links-status').textContent = state.linkRunning ? $('links-status').textContent : linkSummary();
@@ -524,7 +542,8 @@ function updateEdit() {
   const changed = parts.some((x) => x.t !== 'eq');
   if (!changed) diffBox.append(el('span', { class: 'muted' }, 'No changes yet.'));
   for (const x of parts) diffBox.append(x.t === 'eq' ? document.createTextNode(x.s) : el(x.t, null, x.s));
-  $('dlg-ok').disabled = !changed || !text.trim() || (!!limit && n > limit);
+  /* a post in a queue must fit before it is saved; your own post is only text in this page, so it may stay over */
+  $('dlg-ok').disabled = !changed || !text.trim() || (!cfg.own && !!limit && n > limit);
 }
 function openEdit(post, channel, suggestion, label) {
   openDialog({
@@ -549,6 +568,12 @@ function openSimple(post, channel, action, position) {
 async function confirmDialog() {
   const cfg = state.dialog;
   if (!cfg) return;
+  if (cfg.own) {
+    const next = clipOwn($('dlg-text').value);
+    closeDialog();
+    ownSetText(next);
+    return;
+  }
   const btn = $('dlg-ok');
   btn.disabled = true;
   const old = btn.textContent;
@@ -585,9 +610,18 @@ function undoLabel(u) {
   return 'Undo edit · ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
 }
 function showUndoBar() {
+  const bar = $('undo-bar');
+  if (state.view === 'own') {
+    const o = own.undo;
+    if (!o || Date.now() >= o.until) { own.undo = null; bar.hidden = true; return; }
+    $('undo-msg').textContent = 'Text updated.';
+    $('undo-btn').textContent = 'Undo';
+    $('undo-btn').disabled = false;
+    bar.hidden = false;
+    return;
+  }
   const id = state.undoBar;
   const u = id && state.undos.get(id);
-  const bar = $('undo-bar');
   if (!u || Date.now() >= u.until) { bar.hidden = true; state.undoBar = null; return; }
   $('undo-msg').textContent = T('Saved to Buffer.', 'Saved to the sample.');
   $('undo-btn').textContent = undoLabel(u).replace('Undo edit', 'Undo');
@@ -643,6 +677,149 @@ function applyFixResult(res) {
   render();
   if (!state.linkQueue.length) $('links-status').textContent = linkSummary();
   runLinks();
+}
+
+/* ---------- Your own post (/try): one post typed here and checked in this tab; nothing is sent anywhere ---------- */
+const own = { service: OWN_SERVICES[0], queue: true, tz: 'Europe/London', timer: 0, undo: null, last: null, expanded: false };
+const OWN_SHOWN = 12;
+const ownNow = () => new Date(Date.now());
+/* the count updates on every keystroke; the checks run 150 ms after typing stops */
+function ownCounter() {
+  const text = clipOwn($('own-text').value);
+  const ch = ownChannel(own.service, own.tz);
+  const limit = limitFor(ch.service, ch, null);
+  const n = lengthFor(ch.service, text);
+  const c = $('own-count');
+  c.textContent = (limit ? n.toLocaleString('en-US') + ' / ' + limit.toLocaleString('en-US') + ' for ' + svcName(ch.service) : n.toLocaleString('en-US') + ' characters') + (text.length >= OWN_MAX ? ' · this box takes up to 3,000' : '');
+  c.classList.toggle('over', !!limit && n > limit);
+}
+function ownRun() {
+  clearTimeout(own.timer);
+  own.timer = 0;
+  const r = checkOwn({ text: $('own-text').value, service: own.service, when: $('own-when').value, queue: own.queue, now: ownNow(), tz: own.tz });
+  own.last = r;
+  renderOwn(r);
+  return r;
+}
+function ownSoon() { clearTimeout(own.timer); own.timer = setTimeout(ownRun, OWN_DEBOUNCE_MS); }
+function ownStatus(r) {
+  const s = $('own-status');
+  const c = r.counts;
+  const parts = [];
+  if (c.high) parts.push(c.high + (c.medium || c.low ? ' to fix' : ' to fix before it posts'));
+  if (c.medium) parts.push(c.medium + ' worth a look');
+  if (c.low) parts.push(plural(c.low, 'note'));
+  s.textContent = !r.text.trim() ? '' : parts.length ? parts.join(' · ') : '✓ Nothing to catch';
+  s.classList.toggle('is-high', !!c.high);
+  s.classList.toggle('is-med', !c.high && !!c.medium);
+  s.classList.toggle('is-ok', !!r.text.trim() && !c.high && !c.medium);
+}
+/* the flagged words, selected in the text box (for flags without a suggested text) */
+function ownSelect(span) {
+  const box = $('own-text');
+  if (!span || typeof box.setSelectionRange !== 'function') return;
+  box.focus();
+  try { box.setSelectionRange(span[0], span[1]); } catch (e) { /* not important */ }
+}
+function renderOwn(r) {
+  ownCounter();
+  ownStatus(r);
+  const zone = $('own-zone');
+  const picked = String($('own-when').value || '');
+  const note = r.usedDefault ? (picked ? 'That date could not be read, so this uses next Monday at 09:30: ' : 'No time picked, so this uses next Monday at 09:30: ') : r.past ? 'That time has already passed; Buffer only schedules ahead. ' : '';
+  zone.textContent = note + dayWords(r.dueAt, r.tz) + ', in your time zone (' + r.tz + ').';
+  zone.classList.toggle('is-past', r.past || r.usedDefault);
+  const out = $('own-result');
+  if (!r.text.trim()) {
+    out.replaceChildren(el('div', { class: 'own-empty' }, el('p', { class: 'own-empty-title' }, 'Your post shows up here, checked as you type.'), el('p', null, 'Or tap an example. Nothing you type leaves this page.')));
+    return;
+  }
+  const p = r.post;
+  const ch = r.channel;
+  const flags = p.flags;
+  const art = el('article', { class: 'post own-card' + (flags.length ? '' : ' is-clear'), 'aria-label': 'Your post, going out ' + fmtWhen(p.dueAt, ch.timezone) });
+  art.append(el('div', { class: 'post-meta' },
+    el('span', { class: 'when' }, fmtWhen(p.dueAt, ch.timezone)), el('span', null, fromNow(p.dueAt)),
+    el('span', { class: 'badge' }, r.queue ? 'queue slot' : 'custom time'), el('span', { class: 'svc' }, svcName(ch.service))));
+  /* the visitor's text, as text nodes; flagged words become <mark> elements around text nodes */
+  const txt = el('p', { class: 'post-text' }, highlighted(p.text, flags, 'text'));
+  art.append(txt);
+  if (p.text.length > 700) {
+    if (!own.expanded) txt.classList.add('is-long');
+    const more = el('button', { type: 'button', class: 'more', 'aria-expanded': String(own.expanded) }, own.expanded ? 'Show less' : 'Show all');
+    more.addEventListener('click', () => { own.expanded = !own.expanded; renderOwn(own.last); });
+    art.append(more);
+  }
+  if (flags.length) {
+    art.append(flagList(p, flags.slice(0, OWN_SHOWN), (x) => openOwnEdit(r, x),
+      (f, hasSugg) => (!hasSugg && f.where === 'text' && f.spans && f.spans.length ? el('button', { type: 'button', class: 'btn btn-small btn-quiet', onclick: () => ownSelect(f.spans[0]) }, 'Show in the text') : null)));
+    if (flags.length > OWN_SHOWN) art.append(el('p', { class: 'channel-sub own-more' }, plural(flags.length - OWN_SHOWN, 'more flag') + ' in this post, of the same kinds as above.'));
+  } else {
+    art.append(el('p', { class: 'clear-line' }, '✓ Looks good for ' + svcName(ch.service) + ', going out ' + fmtWhen(p.dueAt, ch.timezone) + '.'));
+  }
+  /* links are listed, never opened: the real link check needs the server, and this tab sends nothing */
+  const links = p.links || [];
+  if (links.length) {
+    const n = links.length;
+    art.append(el('ul', { class: 'flags own-links' }, el('li', { class: 'flag sev-info' }, el('span', { class: 'dot', 'aria-hidden': 'true' }),
+      el('div', { class: 'flag-body' }, el('span', { class: 'sev' }, n === 1 ? 'Link' : 'Links'),
+        el('strong', null, (n === 1 ? 'Link' : n + ' links') + ' will be opened on a real queue'),
+        el('p', null, 'Not opened here: ' + links.slice(0, 3).map((l) => snippet(l.url, 60)).join(', ') + (n > 3 ? ' and ' + (n - 3) + ' more' : '') + '. On a real queue Last Look opens ' + (n === 1 ? 'it' : 'each one') + ' like a reader would and flags 404s, dead domains and sign-in walls.')))));
+  }
+  out.replaceChildren(art);
+}
+function openOwnEdit(r, x) {
+  openDialog({ edit: true, own: true, action: 'edit', post: r.post, channel: r.channel, title: x.label || 'Apply suggestion',
+    desc: 'Here is the suggested text. Change anything you like; your post changes only when you press Use this text.', text: x.text, ok: 'Use this text' });
+}
+/* a suggestion was accepted: the box takes the new text, and Undo puts the old text back for two minutes */
+function ownSetText(next) {
+  const box = $('own-text');
+  own.undo = { prev: box.value, until: Date.now() + 2 * 60 * 1000 };
+  box.value = next;
+  ownRun();
+  showUndoBar();
+}
+function ownUndo() {
+  const o = own.undo;
+  own.undo = null;
+  if (o && Date.now() < o.until) { $('own-text').value = o.prev; ownRun(); toast('Back to your text.'); }
+  showUndoBar();
+}
+function ownService(svc) { own.service = OWN_SERVICES.includes(svc) ? svc : OWN_SERVICES[0]; for (const s of OWN_SERVICES) $('own-ch-' + s).checked = s === own.service; }
+function ownQueue(q) { own.queue = q !== false; $('own-mode-queue').checked = own.queue; $('own-mode-fixed').checked = !own.queue; }
+function ownExample(key) {
+  const ex = OWN_EXAMPLES[key];
+  if (!ex) return;
+  ownService(ex.service);
+  ownQueue(ex.queue);
+  $('own-when').value = defaultWhen(ownNow(), own.tz);
+  $('own-text').value = ex.text;
+  own.undo = null; own.expanded = false;
+  showUndoBar();
+  ownRun();
+  /* one column (phones): bring the result up, unless it is already in view */
+  const res = $('own-preview');
+  if (typeof matchMedia === 'function' && matchMedia('(max-width: 899px)').matches && typeof res.getBoundingClientRect === 'function' && res.getBoundingClientRect().top > innerHeight * 0.55) {
+    res.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }
+}
+function initOwn() {
+  own.tz = localZone();
+  /* the browser may restore the form after a reload: keep its text, channel and mode */
+  const restored = OWN_SERVICES.find((s) => $('own-ch-' + s).checked);
+  if (restored) own.service = restored;
+  if ($('own-mode-fixed').checked) own.queue = false;
+  if (!parseWhen($('own-when').value, own.tz)) $('own-when').value = defaultWhen(ownNow(), own.tz);
+  $('own-text').addEventListener('input', () => { if (own.undo) { own.undo = null; showUndoBar(); } ownCounter(); ownSoon(); });
+  for (const s of OWN_SERVICES) $('own-ch-' + s).addEventListener('change', () => { own.service = s; ownRun(); });
+  $('own-mode-queue').addEventListener('change', () => { own.queue = true; ownRun(); });
+  $('own-mode-fixed').addEventListener('change', () => { own.queue = false; ownRun(); });
+  $('own-when').addEventListener('input', ownSoon);
+  $('own-when').addEventListener('change', ownRun);
+  for (const k of Object.keys(OWN_EXAMPLES)) $('own-ex-' + k).addEventListener('click', () => ownExample(k));
+  $('v-own').addEventListener('click', () => setView('own'));
+  ownRun();
 }
 
 /* ---------- scanning and link checks ---------- */
@@ -809,9 +986,14 @@ async function init() {
   setInterval(scanButton, 1000);
   setInterval(undoTick, 1000);
   setInterval(retryButton, 1000);
-  $('undo-btn').addEventListener('click', () => { if (state.undoBar) doUndo(state.undoBar); });
-  /* a link to #lookback opens the tab; on a real account the read waits for a click (the sample loads at once) */
+  $('undo-btn').addEventListener('click', () => { if (state.view === 'own') ownUndo(); else if (state.undoBar) doUndo(state.undoBar); });
+  /* a link to #lookback opens the tab; on a real account the read waits for a click (the sample loads at once).
+     /try opens on "Your own post"; /try#sample opens the sample queue */
+  if (MODE === 'try') initOwn();
   if (location.hash === '#lookback') setView('back', { load: MODE === 'try' });
+  else if (MODE === 'try') setView(location.hash === '#sample' ? 'queue' : 'own');
+  /* an in-page link to /try#sample or /try#lookback switches the tab without a reload */
+  if (MODE === 'try' && typeof addEventListener === 'function') addEventListener('hashchange', () => setView(location.hash === '#lookback' ? 'back' : location.hash === '#sample' ? 'queue' : 'own'));
   doScan(false);
 }
 if (typeof document !== 'undefined' && document.getElementById('queue')) init();

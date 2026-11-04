@@ -1,5 +1,7 @@
 /* A minimal browser for public/app.js in Node: fake DOM nodes, a fake clock with timers, a fake location, and a
-   fetch the test controls. load() imports a fresh copy of the app (its init() runs on import). */
+   fetch the test controls. load() imports a fresh copy of the app (its init() runs on import).
+   browser({ meta: { mode: 'try' }, hash: '#sample' }) loads it as the /try page. Reading or writing innerHTML on any
+   node throws, so a render path that hands text to an HTML parser fails its test. */
 export class FakeEl {
   constructor(tag) {
     this.tag = tag; this.kids = []; this.attrs = {}; this.textContent = ''; this.hidden = false; this.disabled = false; this.value = ''; this.listeners = {};
@@ -13,7 +15,10 @@ export class FakeEl {
   append(...n) { this.kids.push(...n); }
   replaceChildren(...n) { this.kids = n; }
   focus() {} scrollIntoView() {} showModal() { this.open = true; } close() { this.open = false; }
+  get innerHTML() { throw new Error('innerHTML read on <' + this.tag + '>'); }
+  set innerHTML(v) { throw new Error('innerHTML written on <' + this.tag + '>: ' + String(v).slice(0, 40)); }
   click() { if (this.disabled) return; for (const f of this.listeners.click || []) f({ preventDefault() {}, target: this }); }
+  fire(type) { for (const f of this.listeners[type] || []) f({ preventDefault() {}, target: this }); }
   find(id) {
     if (this.attrs.id === id) return this;
     for (const k of this.kids) { const f = k instanceof FakeEl ? k.find(id) : null; if (f) return f; }
@@ -23,7 +28,8 @@ export class FakeEl {
 }
 
 const realSetImmediate = setImmediate;
-export function browser() {
+export function browser(opts) {
+  const o = opts || {};
   const els = new Map();
   const timers = [];
   let seq = 0;
@@ -60,12 +66,16 @@ export function browser() {
       for (const root of els.values()) { const f = root.find(id); if (f) return f; }
       const n = new FakeEl('div'); n.attrs.id = id; els.set(id, n); return n;
     },
-    querySelector: () => null, querySelectorAll: () => [],
+    querySelector: (sel) => {
+      const m = /^meta\[name="([^"]+)"\]$/.exec(String(sel));
+      return m && o.meta && o.meta[m[1]] != null ? { getAttribute: () => String(o.meta[m[1]]) } : null;
+    },
+    querySelectorAll: () => [],
     createElement: (t) => new FakeEl(t),
     createTextNode: (s) => { const n = new FakeEl('#text'); n.textContent = String(s); return n; },
     createDocumentFragment: () => new FakeEl('#frag')
   };
-  globalThis.location = { hash: '', pathname: '/', replace() {} };
+  globalThis.location = { hash: o.hash || '', pathname: o.path || '/', replace() {} };
   globalThis.history = { replaceState(_, __, url) { globalThis.location.hash = String(url).startsWith('#') ? String(url) : ''; } };
   Date.now = () => b.clock;
   globalThis.setInterval = (fn, ms) => { timers.push({ id: ++seq, at: b.clock + ms, every: ms, fn }); return seq; };

@@ -154,7 +154,8 @@ test('OAuth callback is refused when the app allowance is nearly gone (before sp
   const html = await r.text();
   assert.match(html, /A short pause/);
   assert.match(html, /Try again in about 10 minutes\./);
-  assert.match(html, /href="\/try">Try the sample queue/);
+  assert.match(html, /href="\/try">Check a post/);
+  assert.match(html, /href="\/try#sample">Sample queue/);
 });
 
 test('OAuth start says "a short pause" before the consent screen when the allowance is low; nothing is reserved', async () => {

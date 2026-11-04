@@ -31,5 +31,5 @@ test('calm states: limits and 429 read as a short pause with a time to come back
 test('empty queue points to Look back and the sample; error copy never blames the user', () => {
   const src = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(src, /'Look back at sent posts'/);
-  assert.match(src, /href: '\/try' \}, 'See a sample queue'/);
+  assert.match(src, /href: '\/try#sample' \}, 'See a sample queue'/);
 });

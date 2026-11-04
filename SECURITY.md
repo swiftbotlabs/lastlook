@@ -35,6 +35,7 @@ What the app protects: each user's Buffer access token and their queued posts, a
 
 ## The /try sample page
 - Served without a session and without a CSRF token; it never reads the session store or asks the gate.
+- "Your own post" (the first tab) renders text the visitor types. It is built only from DOM text nodes and `<mark>` wrappers (`textContent`, never `innerHTML`; the test DOM throws on any `innerHTML` use), capped at 3,000 characters, checked by the same pure check code, and never sent anywhere: `public/own.js` and the tab's part of `public/app.js` contain no `fetch`, XHR, WebSocket, beacon, dynamic import, storage or `src=`, and links in the text are listed, not opened (a test drives typing, examples, fixes and tab switches and asserts zero network calls; a live check with Chrome's network log saw zero requests after load). No new inline script or style: the composer is static markup under the unchanged CSP.
 - In try mode the page's backend is `public/sample.js`, which has no network code; `api()` refuses to run before any `fetch`, so the sample page cannot reach `/api/*`, Buffer or the link checker (tests cover both). Sample links use reserved `.example` names and their results are fixed data.
 
 ## Showing third-party text

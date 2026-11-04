@@ -133,9 +133,10 @@ test('/try page: served without a session, no CSRF token, clear banner, same CSP
   const html2 = await (await worker.fetch(new Request(ORIGIN + '/try', { headers: { cookie: s.cookie } }), env)).text();
   assert.ok(!html2.includes(s.csrf));
   const landing = await (await worker.fetch(new Request(ORIGIN + '/'), env)).text();
-  assert.match(landing, /href="\/try">Try it without connecting/);
+  assert.match(landing, /href="\/try">Try it on your own post/);
+  assert.match(landing, /href="\/try#sample">browse a sample queue/);
   const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.match(app, /href: '\/try' \}, 'See a sample queue'/);
+  assert.match(app, /href: '\/try#sample' \}, 'See a sample queue'/);
 });
 
 test('sample backend: Undo restores the previous text once, only with its own token, within two minutes', async () => {

@@ -2,7 +2,7 @@
    the app page is a shell, and public/app.js builds the queue view with textContent. */
 
 export const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const V = '20261103h';
+const V = '20261104a';
 
 const LOGO = '<svg class="logo" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect x="1" y="1" width="30" height="30" rx="8" class="logo-bg"/><path d="M6 17.5c2.6-4.4 6-6.6 10-6.6s7.4 2.2 10 6.6c-2.6 4.4-6 6.6-10 6.6s-7.4-2.2-10-6.6z" class="logo-eye"/><circle cx="16" cy="17.5" r="3.4" class="logo-pupil"/><path d="M9 8.2h14" class="logo-line"/></svg>';
 
@@ -50,8 +50,9 @@ export function landingPage() {
     <p class="lead">Last Look reads every post waiting in your Buffer queue and flags what would make you wince once it is live: a dead link, a “tomorrow” that will mean the wrong day, Markdown that shows up as asterisks, a post too long for the network, the same post queued twice. Fix each one in a click. Nothing changes until you confirm.</p>
     <div class="cta-row">
       <a class="btn btn-primary btn-lg" href="/oauth/start">Connect Buffer</a>
-      <a class="btn btn-lg" href="/try">Try it without connecting</a>
+      <a class="btn btn-lg" href="/try">Try it on your own post</a>
     </div>
+    <p class="hero-alt muted">Trying it needs no sign-in. Or <a href="/try#sample">browse a sample queue</a>.</p>
     <ul class="trust" aria-label="Promises">
       <li>Reads your queue, changes nothing on its own</li>
       <li>Never deletes a post</li>
@@ -93,21 +94,68 @@ export function landingPage() {
       <li><strong>Move in the queue.</strong> Send a repeat to the back of the queue.</li>
     </ol>
     <p class="note">Every change goes through Buffer’s own API, only when you press confirm, and only on the post you picked.</p>
-    <p class="cta-row"><a class="btn btn-primary" href="/oauth/start">Connect Buffer</a><a class="btn" href="/try">Try the sample queue</a></p>
+    <p class="cta-row"><a class="btn btn-primary" href="/oauth/start">Connect Buffer</a><a class="btn" href="/try">Try it on your own post</a></p>
   </section>
 </main>`, {});
 }
 
+/* /try "Your own post": the composer is static markup; public/app.js reads it and renders the check result */
+const OWN_PILLS = [['twitter', 'X'], ['linkedin', 'LinkedIn'], ['bluesky', 'Bluesky'], ['threads', 'Threads'], ['instagram', 'Instagram'], ['mastodon', 'Mastodon']]
+  .map(([v, n], i) => `<label class="pill"><input type="radio" name="own-ch" id="own-ch-${v}" value="${v}"${i === 0 ? ' checked' : ''}><span>${n}</span></label>`).join('');
+const OWN = `
+  <section class="own" id="own" aria-labelledby="own-h">
+    <div class="own-grid">
+      <div class="own-compose">
+        <h1 id="own-h">Check a post before it goes out</h1>
+        <p class="own-intro muted">Type or paste a post. Last Look checks it as you type, with the same code it runs on a real Buffer queue. Nothing you type leaves this page.</p>
+        <div class="own-examples" role="group" aria-labelledby="own-ex-l">
+          <span class="lbl" id="own-ex-l">Try an example</span>
+          <button type="button" class="chip" id="own-ex-slip">Weekday slip</button>
+          <button type="button" class="chip" id="own-ex-tomorrow">“tomorrow” that moves</button>
+          <button type="button" class="chip" id="own-ex-raw">Raw ** on X</button>
+        </div>
+        <fieldset class="own-field">
+          <legend class="lbl">Channel</legend>
+          <div class="pills">${OWN_PILLS}</div>
+        </fieldset>
+        <label class="lbl own-text-l" for="own-text">Your post</label>
+        <textarea id="own-text" class="own-text" rows="5" maxlength="3000" spellcheck="true" placeholder="Happy Friday! Our sale ends tomorrow…"></textarea>
+        <div class="own-meter"><p class="own-status" id="own-status" aria-live="polite"></p><p class="counter" id="own-count"></p></div>
+      </div>
+      <div class="own-preview" id="own-preview">
+        <p class="lbl own-preview-l">How Last Look sees it</p>
+        <div class="own-result" id="own-result"><div class="own-empty"><p class="own-empty-title">Your post shows up here, checked as you type.</p><p>Or tap an example. Nothing you type leaves this page.</p></div></div>
+        <p class="own-real"><a href="/oauth/start">Run this on your real Buffer queue</a><span aria-hidden="true"> →</span></p>
+      </div>
+      <div class="own-settings">
+        <fieldset class="own-field">
+          <legend class="lbl">Goes out</legend>
+          <div class="own-when">
+            <input type="datetime-local" id="own-when" class="own-when-input" aria-label="Date and time it goes out" aria-describedby="own-zone">
+            <div class="pills" role="radiogroup" aria-label="How it is scheduled">
+              <label class="pill"><input type="radio" name="own-mode" id="own-mode-queue" value="queue" checked><span>Queue slot</span></label>
+              <label class="pill"><input type="radio" name="own-mode" id="own-mode-fixed" value="fixed"><span>Fixed time</span></label>
+            </div>
+          </div>
+          <p class="own-zone muted" id="own-zone">Next Monday at 09:30, in your time zone.</p>
+        </fieldset>
+      </div>
+    </div>
+    <noscript><p class="banner warn">Checking a post here needs JavaScript: the checks run in your browser.</p></noscript>
+  </section>`;
+
 function appBody(o) {
+  const hide = o.sample ? ' hidden' : '';
   const banner = o.sample ? `
-  <div class="banner try" role="note"><strong>Sample queue, made up for this demo.</strong> These are the queued posts of Little Kiln Studio, a fictional pottery studio, checked by the same code Last Look runs on a real Buffer queue. Nothing here is sent to Buffer; fixes change only this page. <a href="/oauth/start">Connect Buffer</a> to check your own.</div>` : '';
+  <div class="banner try" id="try-banner" role="note" hidden><strong>Sample queue, made up for this demo.</strong> These are the queued posts of Little Kiln Studio, a fictional pottery studio, checked by the same code Last Look runs on a real Buffer queue. Nothing here is sent to Buffer; fixes change only this page. <a href="/oauth/start">Connect Buffer</a> to check your own.</div>` : '';
   return `
-<main id="main" class="app">${banner}
-  <div class="views" role="group" aria-label="View">
-    <button type="button" class="view-tab" id="v-queue" aria-pressed="true">${o.sample ? 'Sample queue' : 'Your queue'}</button>
+<main id="main" class="app">
+  <div class="views" role="group" aria-label="View">${o.sample ? `
+    <button type="button" class="view-tab" id="v-own" aria-pressed="true">Your own post</button>` : ''}
+    <button type="button" class="view-tab" id="v-queue" aria-pressed="${o.sample ? 'false' : 'true'}">${o.sample ? 'Sample queue' : 'Your queue'}</button>
     <button type="button" class="view-tab" id="v-back" aria-pressed="false">Look back</button>
-  </div>
-  <section class="summary" aria-live="polite">
+  </div>${o.sample ? OWN : ''}${banner}
+  <section class="summary" id="summary" aria-live="polite"${hide}>
     <div class="summary-main">
       <h1 id="headline">${o.sample ? 'Loading the sample…' : 'Reading your queue…'}</h1>
       <p id="subline" class="muted">${o.sample ? 'One moment.' : 'This takes a few seconds.'}</p>
@@ -116,14 +164,14 @@ function appBody(o) {
       <button type="button" class="btn" id="rescan" disabled>${o.sample ? 'Reset sample' : 'Scan again'}</button>
     </div>
   </section>
-  <div class="toolbar" role="group" aria-label="Show">
+  <div class="toolbar" id="toolbar" role="group" aria-label="Show"${hide}>
     <button type="button" class="chip" id="f-flagged" aria-pressed="true">Needs a look</button>
     <button type="button" class="chip" id="f-all" aria-pressed="false">All posts</button>
     <label class="toggle"><input type="checkbox" id="f-notes"> Show notes</label>
     <span class="links-status muted" id="links-status" aria-live="polite"></span>
   </div>
-  <div id="queue" class="queue"><div class="skeleton" aria-hidden="true"><div></div><div></div><div></div></div></div>
-  <p class="session-note muted" id="session-note">${o.sample ? 'The sample lives only in this tab. Reset sample or reload to start over.' : ''}</p>
+  <div id="queue" class="queue"${hide}><div class="skeleton" aria-hidden="true"><div></div><div></div><div></div></div></div>
+  <p class="session-note muted" id="session-note"${hide}>${o.sample ? 'The sample lives only in this tab. Reset sample or reload to start over.' : ''}</p>
 </main>
 <dialog id="dlg" aria-labelledby="dlg-title">
   <form method="dialog" class="dlg-body" id="dlg-form">
@@ -152,10 +200,11 @@ export function appPage(o) {
   return shell('Last Look: your queue', appBody({}), { csrf: o.csrf, expires: o.expires, script: true, nav, bodyClass: 'is-app' });
 }
 
-/* /try: the same app on a made-up queue. No session, no CSRF token: the page has nothing to send to the server. */
+/* /try: your own post (first tab) and the same app on a made-up queue. No session, no CSRF token: the page has
+   nothing to send to the server. */
 export function tryPage() {
-  const nav = '<span class="who">Sample queue</span><a class="btn btn-small btn-primary" href="/oauth/start">Connect Buffer</a>';
-  return shell('Try Last Look: a sample queue', appBody({ sample: true }), { script: true, nav, bodyClass: 'is-app is-try', mode: 'try' });
+  const nav = '<span class="who">No sign-in, nothing sent</span><a class="btn btn-small btn-primary" href="/oauth/start">Connect Buffer</a>';
+  return shell('Try Last Look on your own post', appBody({ sample: true }), { script: true, nav, bodyClass: 'is-app is-try', mode: 'try' });
 }
 
 export function privacyPage() {
@@ -173,7 +222,7 @@ export function privacyPage() {
 
   <h2>Where the checks run</h2>
   <p>Our server fetches your queue (and, for Look back, your recent sent posts) from Buffer and passes it straight to your browser. The checks themselves run in your browser tab. The server does not keep the posts after answering. Look back only reads: sent posts cannot be changed, and links in them are not opened.</p>
-  <p>The sample at <a href="/try">/try</a> is made-up data that lives in the page. It needs no sign-in and sends nothing to our server or to Buffer.</p>
+  <p>The try page at <a href="/try">/try</a> needs no sign-in. A post you type there is checked in your browser and is not sent anywhere: not to our server, not to Buffer, and links in it are not opened. The sample queue there is made-up data that lives in the page, and it sends nothing either.</p>
 
   <h2>What is stored, and for how long</h2>
   <ul>
@@ -205,7 +254,7 @@ export function privacyPage() {
 
   <h2>Who runs it</h2>
   <p>Swift Bot Labs, contact <a href="mailto:swiftbotlabs@gmail.com">swiftbotlabs@gmail.com</a>. Last Look runs on Cloudflare Workers. It is not made by or affiliated with Buffer.</p>
-  <p class="muted">Last updated 3 November 2026.</p>
+  <p class="muted">Last updated 4 November 2026.</p>
 </main>`, {});
 }
 
@@ -237,7 +286,7 @@ export function aboutPage() {
     <li>Some sites block automated visitors; those links are marked as “probably fine, open it once” rather than broken.</li>
     <li>Day words are a judgment call. When a post has its own fixed time, Last Look only notes what “tomorrow” will mean, it does not call it wrong.</li>
   </ul>
-  <p class="cta-row"><a class="btn btn-primary" href="/oauth/start">Connect Buffer</a><a class="btn" href="/try">Try the sample queue</a></p>
+  <p class="cta-row"><a class="btn btn-primary" href="/oauth/start">Connect Buffer</a><a class="btn" href="/try">Try it on your own post</a><a class="btn btn-quiet" href="/try#sample">Sample queue</a></p>
 </main>`, {});
 }
 
@@ -247,8 +296,8 @@ export function errorPage(title, message, withRetry, opts) {
 <main id="main" class="prose narrow">
   <h1>${esc(title)}</h1>
   <p class="lead">${esc(message)}</p>
-  ${o.calm ? '<p class="muted">Nothing was read or changed. Meanwhile, the sample queue shows everything Last Look checks, without signing in.</p>' : ''}
-  <p class="cta-row">${o.calm ? '<a class="btn btn-primary" href="/try">Try the sample queue</a>' : withRetry ? '<a class="btn btn-primary" href="/oauth/start">Start again</a>' : ''}<a class="btn btn-quiet" href="/">Back to Last Look</a></p>
+  ${o.calm ? '<p class="muted">Nothing was read or changed. Meanwhile, check a post of your own or browse a sample queue, without signing in.</p>' : ''}
+  <p class="cta-row">${o.calm ? '<a class="btn btn-primary" href="/try">Check a post</a><a class="btn" href="/try#sample">Sample queue</a>' : withRetry ? '<a class="btn btn-primary" href="/oauth/start">Start again</a>' : ''}<a class="btn btn-quiet" href="/">Back to Last Look</a></p>
 </main>`, {});
 }
 /* "in about 7 minutes" for a Retry-After in seconds (the server does not know the visitor's clock or zone) */
