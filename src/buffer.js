@@ -135,10 +135,12 @@ export const Q_LOOKBACK = `query LookBack($org: OrganizationId!, $first: Int!) {
 
 /* daily digest: the next posts to go out (scheduled or awaiting approval, soonest first, so posts set to share next,
    which have no time, come first), with the channels (a query). The window is applied after reading, because a
-   dueAt filter would leave out the share-next posts, the ones going out soonest. */
+   dueAt filter would leave out the share-next posts, the ones going out soonest. draft is in the status list on
+   purpose: the live API returns no scheduled posts for [scheduled, needs_approval] alone (checked 2026-11-04: 0 posts,
+   against 3 for [scheduled] and 3 for [scheduled, needs_approval, draft]); drafts are dropped after reading. */
 export const Q_DIGEST = `query Digest($org: OrganizationId!, $first: Int!) {
   channels(input: { organizationId: $org }) { ${CHANNEL_FIELDS} }
-  posts(first: $first, input: { organizationId: $org, filter: { status: [scheduled, needs_approval] }, sort: [{ field: dueAt, direction: asc }] }) {
+  posts(first: $first, input: { organizationId: $org, filter: { status: [scheduled, needs_approval, draft] }, sort: [{ field: dueAt, direction: asc }] }) {
     edges { node { ${POST_FIELDS} } }
   }
 }`;

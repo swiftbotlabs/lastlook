@@ -53,7 +53,15 @@ function fakeBuffer(opts) {
       const q = JSON.parse(body);
       b.gql.push(q);
       if (/query Me/.test(q.query)) return jres({ data: { account: { id: o.accountId, name: 'Tester', timezone: 'UTC', organizations: [{ id: 'org-' + o.accountId, name: 'Org' }] } } }, 200, o.rate);
-      if (/query Digest/.test(q.query)) return jres({ data: { channels: [{ id: 'ch1', name: 'studio', displayName: 'Studio', service: 'bluesky', timezone: 'Europe/London', metadata: { __typename: 'BlueskyMetadata' } }], posts: { edges: o.posts(q.variables).map((n) => ({ node: n })) } } }, 200, o.rate);
+      if (/query Digest/.test(q.query)) {
+        /* the live API (probed 2026-11-04): status [scheduled, needs_approval] without draft returns only posts awaiting
+           approval, so a queue of scheduled posts comes back empty; with draft in the list every listed status is returned */
+        const m = /status: \[([a-z_, ]+)\]/.exec(q.query);
+        const want = new Set(m ? m[1].split(',').map((x) => x.trim()) : []);
+        const keep = want.has('needs_approval') && !want.has('draft') ? new Set(['needs_approval']) : want;
+        const nodes = o.posts(q.variables).filter((n) => keep.has(n.status)).slice(0, q.variables.first);
+        return jres({ data: { channels: [{ id: 'ch1', name: 'studio', displayName: 'Studio', service: 'bluesky', timezone: 'Europe/London', metadata: { __typename: 'BlueskyMetadata' } }], posts: { edges: nodes.map((n) => ({ node: n })) } } }, 200, o.rate);
+      }
       return jres({ errors: [{ message: 'unexpected query' }] }, 200);
     }
     if (u.startsWith('https://cloudflare-dns.com/')) return jres({ Status: 0, Answer: [{ type: 1, data: '93.184.215.14' }] });
@@ -144,11 +152,11 @@ test('build: refresh rotates the token and the new one is saved before the read;
   assert.deepEqual(refreshes.map((t) => t.rt), ['rt-1-1']);
   const dq = b.gql.filter((q) => /query Digest/.test(q.query));
   assert.equal(dq.length, 1);
-  assert.match(dq[0].query, /status: \[scheduled, needs_approval\]/);
+  assert.match(dq[0].query, /status: \[scheduled, needs_approval, draft\]/, 'draft must be in the list, or Buffer returns no scheduled posts');
   assert.ok(!/dueAt: \{/.test(dq[0].query), 'no dueAt filter: share-next posts have no time and must not be left out');
   assert.match(dq[0].query, /sort: \[\{ field: dueAt, direction: asc \}\]/);
   assert.ok(!/mutation/.test(dq[0].query));
-  assert.equal(dq[0].variables.first, DIGEST.maxPosts);
+  assert.equal(dq[0].variables.first, DIGEST.readPosts);
   const all = storeText(env);
   assert.ok(!all.includes('rt-1-2') && !all.includes('rt-1-1'), 'rotated token stored sealed only');
   /* second build (next day): Buffer sees the rotated token, not the used one */
@@ -347,6 +355,25 @@ test('only the posts inside the window, with at most 4 links opened, private lin
   assert.match(page, /Shares next/);
   assert.match(page, /in a post set to share next/);
   assert.match(page, /of 6 links opened/);
+});
+
+test('a queue of plain scheduled posts reaches the digest (Buffer returns none for [scheduled, needs_approval] alone); drafts are left out', async () => {
+  const env = await digestEnv();
+  const now = Date.now();
+  const soon = new Date(now + 5 * 3600e3).toISOString();
+  const b = fakeBuffer({ posts: () => [
+    NODE('q1', soon, 'QUEUED studio night is **tomorrow** at 7pm', { shareMode: 'addToQueue', isCustomScheduled: false }),
+    NODE('q2', soon, 'QUEUED two: new mugs [link]', { shareMode: 'addToQueue', isCustomScheduled: false }),
+    NODE('d1', soon, 'DRAFT ONLY **never shown**', { status: 'draft' })
+  ] });
+  const ft = ftOf((await subscribe(env, b)).cb);
+  await runAlarms(env);
+  const page = await (await worker.fetch(get('/digest/' + ft), env)).text();
+  assert.ok(!/nothing queued to check/.test(page), 'the digest must see the queued posts');
+  assert.match(page, /Checked 2 posts going out/);
+  assert.match(page, /QUEUED studio night/);
+  assert.match(page, /QUEUED two/);
+  assert.ok(!page.includes('DRAFT ONLY'), 'a draft is not going out, so it is not in the digest');
 });
 
 test('/healthz: the digest watchdog fails after 6 builds in a row fail on our side, and when builds are overdue', async () => {

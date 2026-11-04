@@ -36,7 +36,7 @@ import { gate } from './gate.js';
 
 export const DIGEST_SCOPES = 'account:read posts:read offline_access';
 export const DIGEST = {
-  maxSubs: 300, keep: 7, idleMs: 14 * 864e5, maxPosts: 40, maxLinks: 4, maxOrgs: 2, signupsPerDay: 5,
+  maxSubs: 300, keep: 7, idleMs: 14 * 864e5, maxPosts: 40, readPosts: 100, maxLinks: 4, maxOrgs: 2, signupsPerDay: 5,
   readsPerHour: 120, hours: [7, 12, 17, 20], defaultHour: 17, retryMs: 20 * 60000, maxFails: 6,
   excerpt: 140, staleAlarmMs: 2 * 3600e3, gapMs: 3000
 };
@@ -362,17 +362,19 @@ export class DigestCore {
       let more = false;
       for (const org of orgs) {
         used++;
-        const r = await gql(tok.at, Q_DIGEST, { org: org.id, first: DIGEST.maxPosts });
+        /* one page of 100 (drafts come back too and are dropped below), so up to 40 live posts still fit */
+        const r = await gql(tok.at, Q_DIGEST, { org: org.id, first: DIGEST.readPosts });
         rate = r.rate;
         for (const c of (r.data.channels || []).slice(0, 100)) channels.push(shapeChannel(c));
         const edges = ((r.data.posts || {}).edges || []);
-        if (edges.length >= DIGEST.maxPosts) more = true;
+        if (edges.length >= DIGEST.readPosts) more = true;
         for (const e of edges) if (e && e.node) posts.push(shapePost(e.node));
       }
       await this.gate({ op: 'record', windows: (rate && rate.windows) || {}, hold: adm.hold, used });
       /* inside the window: posts due from now to the end of tomorrow, and posts set to share next (no time, soonest of all) */
-      const live = posts.filter((p) => (p.status === 'scheduled' || p.status === 'needs_approval') && (p.shareNext || (p.dueAt && Date.parse(p.dueAt) >= w.from && Date.parse(p.dueAt) <= w.to))).slice(0, DIGEST.maxPosts);
-      more = more && live.length >= DIGEST.maxPosts;
+      const inWindow = posts.filter((p) => (p.status === 'scheduled' || p.status === 'needs_approval') && (p.shareNext || (p.dueAt && Date.parse(p.dueAt) >= w.from && Date.parse(p.dueAt) <= w.to)));
+      const live = inWindow.slice(0, DIGEST.maxPosts);
+      more = more || inWindow.length > DIGEST.maxPosts;
       const checked = runAll(channels, live, new Date(now)).posts;
       const linkStats = await this.links(s.acct, checked);
       const entry = composeEntry(channels, checked, linkStats, w, s.tz, now, { more, orgsSkipped: Math.max(0, (s.orgs || []).length - orgs.length) });
