@@ -264,10 +264,14 @@ test('own post: /try serves the composer as static markup under the unchanged CS
   for (const [k, ex] of Object.entries(OWN_EXAMPLES)) assert.ok(html.includes('id="own-ex-' + k + '">' + ex.label + '<'), 'example ' + k + ' label in step with own.js');
   assert.match(html, /<a href="\/oauth\/start">Run this on your real Buffer queue<\/a>/);
   assert.match(html, /<input type="datetime-local" id="own-when"/);
-  /* every script is an external same-origin module; no inline styles or event handler attributes */
+  /* every script is external and same-origin: the one-line /boot.js (marks the page as scripted before first paint)
+     and the app module; no inline script, styles or event handler attributes */
   const scripts = html.match(/<script\b[^>]*>/g) || [];
-  assert.equal(scripts.length, 1);
-  assert.match(scripts[0], /^<script type="module" src="\/app\.js\?v=\d{8}[a-z]">$/);
+  assert.equal(scripts.length, 2);
+  assert.match(scripts[0], /^<script src="\/boot\.js\?v=\d{8}[a-z]">$/);
+  assert.match(scripts[1], /^<script type="module" src="\/app\.js\?v=\d{8}[a-z]">$/);
+  assert.equal(readFileSync(new URL('../public/boot.js', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').trim(), "document.documentElement.classList.add('js');");
+  assert.ok(!/<script>/.test(html), 'no inline script');
   assert.ok(!/\sstyle=/i.test(html), 'inline style attribute');
   assert.ok(!/\son[a-z]+=/i.test(html), 'inline event handler');
   assert.equal(env.SESSIONS._m.size, 0);

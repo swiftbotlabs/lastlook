@@ -275,3 +275,19 @@ textarea.own-text{min-height:132px;font-size:16px;background:var(--surface);disp
 .digest-follow li{margin:4px 0}
 .digest-off form{margin:6px 0}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}
+/* /try without JavaScript: the sample's results rendered on the server (#try-static); hidden once scripts run
+   (html.js is set by /boot.js before first paint, and again by app.js) */
+html.js .try-static{display:none}
+html:not(.js) .is-try .views,html:not(.js) .is-try .own-grid{display:none}
+.try-static{padding:4px 0}
+.try-static .summary h2{font-size:clamp(22px,5vw,30px);margin:0 0 4px}
+.try-static .channel-head h3{font-size:18px;margin:0}
+.fix-words{margin:10px 0 0;font-size:14px;color:var(--muted)}
+.fix-words .lbl{margin:0 6px 0 0;color:var(--ink)}
+.ts-back{margin-top:28px;padding-top:18px;border-top:1px solid var(--line)}
+.ts-back h2{font-size:20px;margin:0 0 4px}
+.ts-back p{margin:0}
+.ts-groups{list-style:none;margin:12px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.ts-groups li{display:flex;justify-content:space-between;gap:10px;font-size:15px}
+.ts-groups strong{font-weight:600}
+.ts-foot{margin-top:22px}

@@ -1,8 +1,11 @@
-/* Server-rendered pages. Only static text and values escaped with esc(). Post content is never rendered here:
-   the app page is a shell, and public/app.js builds the queue view with textContent. */
+/* Server-rendered pages. Only static text and values escaped with esc(). Post content from Buffer is never rendered
+   here: the app page is a shell, and public/app.js builds the queue view with textContent. The one exception is our
+   own made-up /try sample, rendered escaped by trystatic.js for readers without JavaScript. */
+
+import { trySample } from './trystatic.js';
 
 export const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const V = '20261104d';
+const V = '20261105a';
 
 const LOGO = '<svg class="logo" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect x="1" y="1" width="30" height="30" rx="8" class="logo-bg"/><path d="M6 17.5c2.6-4.4 6-6.6 10-6.6s7.4 2.2 10 6.6c-2.6 4.4-6 6.6-10 6.6s-7.4-2.2-10-6.6z" class="logo-eye"/><circle cx="16" cy="17.5" r="3.4" class="logo-pupil"/><path d="M9 8.2h14" class="logo-line"/></svg>';
 
@@ -23,6 +26,7 @@ ${o.expires ? `<meta name="session-exp" content="${esc(String(o.expires))}">` : 
 ${o.mode ? `<meta name="mode" content="${esc(o.mode)}">` : ''}
 <link rel="icon" href="/icon.svg?v=${V}" type="image/svg+xml">
 <link rel="stylesheet" href="/app.css?v=${V}">
+${o.boot ? `<script src="/boot.js?v=${V}"></script>` : ''}
 ${o.script ? `<script type="module" src="/app.js?v=${V}"></script>` : ''}
 </head>
 <body class="${o.bodyClass || ''}">
@@ -142,7 +146,7 @@ const OWN = `
         </fieldset>
       </div>
     </div>
-    <noscript><p class="banner warn">Checking a post here needs JavaScript: the checks run in your browser.</p></noscript>
+    <noscript><p class="banner warn">Checking a post of your own needs JavaScript: the checks run in your browser. Below is the sample queue, checked on our server when this page was sent.</p></noscript>
   </section>`;
 
 function appBody(o) {
@@ -156,11 +160,11 @@ function appBody(o) {
     <button type="button" class="view-tab" id="v-queue" aria-pressed="${o.sample ? 'false' : 'true'}">${o.sample ? 'Sample queue' : 'Your queue'}</button>
     <button type="button" class="view-tab" id="v-back" aria-pressed="false">Look back</button>${o.sample ? '' : `
     <button type="button" class="view-tab" id="v-digest" aria-pressed="false">Daily digest</button>`}
-  </div>${o.sample ? OWN : ''}${banner}
+  </div>${o.sample ? OWN : ''}${o.staticHtml || ''}${banner}
   <section class="summary" id="summary" aria-live="polite"${hide}>
     <div class="summary-main">
-      <h1 id="headline">${o.sample ? 'Loading the sample…' : 'Reading your queue…'}</h1>
-      <p id="subline" class="muted">${o.sample ? 'One moment.' : 'This takes a few seconds.'}</p>
+      <h1 id="headline">${o.sample ? 'Sample queue' : 'Reading your queue…'}</h1>
+      <p id="subline" class="muted">${o.sample ? 'Little Kiln Studio, a made-up pottery studio.' : 'This takes a few seconds.'}</p>
     </div>
     <div class="summary-actions">
       <button type="button" class="btn" id="rescan" disabled>${o.sample ? 'Reset sample' : 'Scan again'}</button>
@@ -203,10 +207,11 @@ export function appPage(o) {
 }
 
 /* /try: your own post (first tab) and the same app on a made-up queue. No session, no CSRF token: the page has
-   nothing to send to the server. */
-export function tryPage() {
+   nothing to send to the server. The sample's results are also rendered here as plain HTML (src/trystatic.js), so
+   the first paint without JavaScript shows the real flagged posts; /boot.js hides that copy when scripts run. */
+export function tryPage(now) {
   const nav = '<span class="who">No sign-in, nothing sent</span><a class="btn btn-small btn-primary" href="/oauth/start">Connect Buffer</a>';
-  return shell('Try Last Look on your own post', appBody({ sample: true }), { script: true, nav, bodyClass: 'is-app is-try', mode: 'try' });
+  return shell('Try Last Look on your own post', appBody({ sample: true, staticHtml: trySample(now).html }), { script: true, boot: true, nav, bodyClass: 'is-app is-try', mode: 'try' });
 }
 
 export function privacyPage() {

@@ -14,3 +14,5 @@
   Cache-Control: public, max-age=300
 /own.js
   Cache-Control: public, max-age=300
+/boot.js
+  Cache-Control: public, max-age=300

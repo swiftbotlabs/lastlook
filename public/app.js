@@ -1068,6 +1068,10 @@ function sessionClock() {
   note.textContent = 'This session ends in ' + plural(Math.max(1, Math.round(left / 60000)), 'minute') + '. Disconnect deletes it now. Last Look keeps no copy of your posts.';
 }
 async function init() {
+  /* scripts run: the plain-HTML copy of the sample (for readers without JavaScript) gives way to the live view */
+  if (document.documentElement) document.documentElement.classList.add('js');
+  const plain = document.getElementById('try-static');
+  if (plain && typeof plain.remove === 'function') plain.remove();
   if (MODE === 'try') {
     const { SampleBackend } = await import('./sample.js');
     const sample = new SampleBackend();
