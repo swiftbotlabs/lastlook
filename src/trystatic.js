@@ -152,3 +152,38 @@ function build(at, nowMs) {
     + '</section>';
   return { html, headline, subline, flagged: flagged.length, posts: posts.length, issues, high, back: t };
 }
+
+/* The landing page's light table: three posts of the same made-up sample queue, checked by the same code at request
+   time (no network), as escaped HTML; plus the sample's headline and its Look back totals. Kept for the minute, like
+   trySample. Frames: the sale post (three flags and a one-click word fix), the hiring post (raw formatting) and the
+   spring-term post (nothing to fix). */
+const HERO_IDS = ['s-sale', 's-hiring', 's-spring'];
+let heroMemo = null;
+export function heroSample(now) {
+  const at = now || new Date();
+  const minute = Math.floor(at.getTime() / 60000);
+  if (heroMemo && heroMemo.minute === minute) return heroMemo.out;
+  const all = trySample(at);
+  const res = runAll(SAMPLE_CHANNELS, sampleQueue(at), at, { rules: cleanRules(SAMPLE_RULES) });
+  const byId = new Map(res.posts.map((p) => [p.id, p]));
+  const frames = HERO_IDS.map((id) => {
+    const p = byId.get(id);
+    const ch = SAMPLE_CHANNELS.find((c) => c.id === p.channelId);
+    const every = flagsOf(p);
+    const flags = every.filter((f) => f.severity !== 'low');
+    const words = [];
+    for (const f of flags) for (const x of f.fixes || []) if (x.type === 'edit' && typeof x.text === 'string' && x.text !== p.text && x.label && !words.includes(x.label)) words.push(x.label);
+    const slot = p.status === 'needs_approval' ? 'awaiting approval' : p.isCustomScheduled ? 'custom time' : 'queue slot';
+    return {
+      id, service: ch.service, channel: svcName(ch.service), when: fmtWhen(p.dueAt, ch.timezone).replace(' · ', ' '), slot,
+      textHtml: markText(p.text, every, 'text'),
+      flags: flags.map((f) => ({ sev: f.severity, word: SEV_WORD[f.severity], title: f.title, detail: f.detail })),
+      fix: words[0] || null
+    };
+  });
+  const lb = runLookback(SAMPLE_CHANNELS, sampleSent(at), at);
+  const groups = lb.groups.filter((g) => g.items.length).map((g) => ({ title: g.title, n: g.items.length }));
+  const out = { frames, headline: all.headline, subline: all.subline, back: all.back, groups };
+  heroMemo = { minute, out };
+  return out;
+}

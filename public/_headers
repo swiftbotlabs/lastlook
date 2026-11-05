@@ -16,3 +16,9 @@
   Cache-Control: public, max-age=300
 /boot.js
   Cache-Control: public, max-age=300
+/site.js
+  Cache-Control: public, max-age=300
+/fonts/*
+  Cache-Control: public, max-age=86400
+/icons/*
+  Cache-Control: public, max-age=86400

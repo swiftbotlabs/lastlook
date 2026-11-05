@@ -270,7 +270,11 @@ test('own post: /try serves the composer as static markup under the unchanged CS
   assert.equal(scripts.length, 2);
   assert.match(scripts[0], /^<script src="\/boot\.js\?v=\d{8}[a-z]">$/);
   assert.match(scripts[1], /^<script type="module" src="\/app\.js\?v=\d{8}[a-z]">$/);
-  assert.equal(readFileSync(new URL('../public/boot.js', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').trim(), "document.documentElement.classList.add('js');");
+  /* boot.js marks the page as scripted before anything else, and otherwise only applies the remembered colour theme:
+     no network, no eval, no access to the page's post text */
+  const boot = readFileSync(new URL('../public/boot.js', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(boot, /^\s*\(function \(\) \{\s*var d = document\.documentElement;\s*d\.classList\.add\('js'\);/);
+  assert.ok(!/fetch|XMLHttpRequest|sendBeacon|WebSocket|import\(|eval|Function\(|innerHTML|\.src\s*=|own-text/.test(boot), 'boot.js does nothing but the class and the theme');
   assert.ok(!/<script>/.test(html), 'no inline script');
   assert.ok(!/\sstyle=/i.test(html), 'inline style attribute');
   assert.ok(!/\son[a-z]+=/i.test(html), 'inline event handler');

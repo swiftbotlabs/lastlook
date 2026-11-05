@@ -2,106 +2,235 @@
    here: the app page is a shell, and public/app.js builds the queue view with textContent. The one exception is our
    own made-up /try sample, rendered escaped by trystatic.js for readers without JavaScript. */
 
-import { trySample } from './trystatic.js';
+import { trySample, heroSample } from './trystatic.js';
 
 export const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const V = '20261105a';
+const V = '20261106a';
 
 const LOGO = '<svg class="logo" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect x="1" y="1" width="30" height="30" rx="8" class="logo-bg"/><path d="M6 17.5c2.6-4.4 6-6.6 10-6.6s7.4 2.2 10 6.6c-2.6 4.4-6 6.6-10 6.6s-7.4-2.2-10-6.6z" class="logo-eye"/><circle cx="16" cy="17.5" r="3.4" class="logo-pupil"/><path d="M9 8.2h14" class="logo-line"/></svg>';
 
 function shell(title, body, opts) {
   const o = opts || {};
   return `<!doctype html>
-<html lang="en">
+<html lang="en"${o.htmlAttrs || ''}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${esc(title)}</title>
 <meta name="description" content="A last look at your Buffer queue before it posts: dead links, day words that will be wrong, Markdown that shows raw, over-long posts and repeats, each with a one-click fix.">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#f6f3ee" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#14161a" media="(prefers-color-scheme: dark)">
-${o.csrf ? `<meta name="csrf" content="${esc(o.csrf)}">` : ''}
+<meta name="theme-color" content="#f1f2ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#151617" media="(prefers-color-scheme: dark)">
+${o.metas || ''}${o.csrf ? `<meta name="csrf" content="${esc(o.csrf)}">` : ''}
 ${o.expires ? `<meta name="session-exp" content="${esc(String(o.expires))}">` : ''}
 ${o.mode ? `<meta name="mode" content="${esc(o.mode)}">` : ''}
 <link rel="icon" href="/icon.svg?v=${V}" type="image/svg+xml">
+<link rel="preload" href="/fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/app.css?v=${V}">
-${o.boot ? `<script src="/boot.js?v=${V}"></script>` : ''}
-${o.script ? `<script type="module" src="/app.js?v=${V}"></script>` : ''}
+${o.bare ? '' : `<script src="/boot.js?v=${V}"></script>`}
+${o.script ? `<script type="module" src="/app.js?v=${V}"></script>` : ''}${o.site ? `<script type="module" src="/site.js?v=${V}"></script>` : ''}
 </head>
 <body class="${o.bodyClass || ''}">
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
-  <a class="brand" href="/" aria-label="Last Look home">${LOGO}<span class="brand-name">Last Look</span></a>
-  <nav class="top-nav" aria-label="Site">${o.nav || '<a href="/about">How it works</a><a href="/privacy">Privacy</a>'}</nav>
+  <div class="top-in">
+    <a class="brand" href="/" aria-label="Last Look home">${LOGO}<span class="brand-name">Last Look</span></a>
+    <nav class="top-nav" aria-label="Site">${o.nav || '<a href="/about">How it works</a><a href="/privacy">Privacy</a><a class="btn btn-small btn-primary top-cta" href="/oauth/start">Connect Buffer</a>'}</nav>
+    ${o.bare ? '' : `<button type="button" class="theme" id="theme" aria-pressed="false" aria-label="Dark mode" title="Dark mode"><svg class="ic-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg><svg class="ic-moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19.5 14.6A8 8 0 0 1 9.4 4.5a8 8 0 1 0 10.1 10.1z"/></svg></button>`}
+  </div>
 </header>
 ${body}
 <footer class="foot">
-  <p>Last Look by Swift Bot Labs. Uses the Buffer API; not made by or affiliated with Buffer.</p>
-  <p><a href="/about">How it works</a> · <a href="/privacy">Privacy</a></p>
+  <div class="foot-in">
+    <p>Last Look by Swift Bot Labs. Uses the Buffer API; not made by or affiliated with Buffer.</p>
+    <p class="foot-links"><a href="/about">How it works</a><a href="/privacy">Privacy</a><a href="/try">Try it</a></p>
+  </div>
 </footer>
 </body>
 </html>`;
 }
 
-export function landingPage() {
+/* channel icons (real logos, self-hosted); X and Threads are one-colour marks and flip in dark mode */
+const ICONS = { twitter: ['x', 'X', true], linkedin: ['linkedin', 'LinkedIn'], bluesky: ['bluesky', 'Bluesky'], instagram: ['instagram', 'Instagram'], threads: ['threads', 'Threads', true], mastodon: ['mastodon', 'Mastodon'] };
+const icon = (svc, cls) => { const i = ICONS[svc]; return i ? `<img class="ic${i[2] ? ' ic-ink' : ''}${cls ? ' ' + cls : ''}" src="/icons/${i[0]}.svg?v=${V}" alt="" width="16" height="16" loading="lazy" decoding="async">` : ''; };
+
+/* the edge print a frame carries: channel, send time, how it is scheduled */
+const edge = (svc, name, when, slot) => `<div class="edge" aria-label="${esc(name + ', ' + when + ', ' + slot)}">${icon(svc)}<span class="edge-ch">${esc(name)}</span><span class="edge-when">${esc(when)}</span><span class="edge-slot">${esc(slot)}</span></div>`;
+
+function heroFrame(f, i) {
+  const flags = f.flags.map((x, k) => `<li class="flag ${x.sev === 'high' ? 'sev-high' : 'sev-med'}" data-k="${k}"><span class="dot" aria-hidden="true"></span><div class="flag-body"><span class="sev">${esc(x.word)}</span><strong>${esc(x.title)}</strong></div></li>`).join('');
+  const body = f.flags.length
+    ? `<ul class="flags">${flags}</ul>${f.fix ? `<div class="fix-row"><span class="btn btn-small hero-fix" aria-hidden="true">${esc(f.fix)}</span><span class="btn btn-small btn-quiet" aria-hidden="true">Edit text</span></div>` : ''}`
+    : '<p class="clear-line"><svg class="ok-tick" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.5 12.8l4.6 4.4L19.6 6.6"/></svg>Nothing to fix in this post.</p>';
+  return `<article class="post frame${f.flags.length ? '' : ' is-clear'}" data-frame="${i}">${edge(f.service, f.channel, f.when, f.slot)}<p class="post-text">${f.textHtml}</p>${body}</article>`;
+}
+
+export function landingPage(now) {
+  const h = heroSample(now);
+  const back = h.back;
+  const caught = back.issues ? 'Last Look would have caught ' + back.issues + ' issue' + (back.issues === 1 ? '' : 's') + ' in the studio’s last ' + back.checked + ' sent post' + (back.checked === 1 ? '' : 's') : '';
+  const metas = '<meta name="page-type" content="software">\n<meta name="site-kind" content="software">\n';
   return shell('Last Look for Buffer', `
 <main id="main" class="landing">
-  <div class="hero-wrap">
-  <section class="hero">
-    <p class="eyebrow">For your Buffer queue</p>
-    <h1>Catch the embarrassing post before your audience does.</h1>
-    <p class="lead">Last Look reads every post waiting in your Buffer queue and flags what would make you wince once it is live: a dead link, a “tomorrow” that will mean the wrong day, Markdown that shows up as asterisks, a post too long for the network, the same post queued twice. Fix each one in a click. Nothing changes until you confirm.</p>
-    <div class="cta-row">
-      <a class="btn btn-primary btn-lg" href="/oauth/start">Connect Buffer</a>
-      <a class="btn btn-lg" href="/try">Try it on your own post</a>
+  <section class="hero" aria-labelledby="hero-h">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <p class="hero-fact">Up to 300 queued posts a scan, each judged at its own send time.</p>
+        <h1 id="hero-h">Pre-publish checks for your Buffer queue</h1>
+        <p class="lead">Last Look reads every post waiting in your Buffer queue and flags what would make you wince once it is live. Fix each one in a click. Nothing changes until you confirm.</p>
+        <div class="cta-row hero-cta">
+          <a class="btn btn-primary btn-lg" href="/oauth/start">Connect Buffer</a>
+          <a class="btn btn-lg" href="/try">Try it on your own post</a>
+        </div>
+        <p class="hero-alt muted">Trying it needs no sign-in. Or <a href="/try#sample">browse a sample queue</a>.</p>
+      </div>
+      <div class="table" id="table" data-ui role="group" aria-label="Three posts from the sample queue, checked by Last Look">
+        <div class="rebate rebate-top" aria-hidden="true"><span>Sample queue</span><span>Little Kiln Studio, made up for this demo</span><span>checked by the same code as /try</span></div>
+        <div class="strip">${h.frames.slice(0, 2).map(heroFrame).join('')}</div>
+        <div class="result" aria-live="off"><p class="result-h">${esc(h.headline)}</p><p class="result-s">${esc(h.subline)}</p><a class="result-a" href="/try#sample">Open the sample queue</a></div>
+        <button type="button" class="replay" id="replay" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4.5v4h4"/></svg>Replay</button>
+      </div>
     </div>
-    <p class="hero-alt muted">Trying it needs no sign-in. Or <a href="/try#sample">browse a sample queue</a>.</p>
-    <ul class="trust" aria-label="Promises">
-      <li>Reads your queue, changes nothing on its own</li>
-      <li>Never deletes a post</li>
-      <li>Keeps no copy of your posts</li>
-    </ul>
   </section>
 
-  <section class="demo" aria-label="Example of a flagged post">
-    <article class="post demo-post">
-      <div class="post-meta"><span class="when">Fri 13 Nov · 09:30</span><span class="badge">queue slot</span><span class="svc">X</span></div>
-      <p class="post-text">Our autumn sale ends <mark class="hl hl-med">tomorrow</mark>! <mark class="hl hl-med">**Everything**</mark> is 30% off. Shop now: <mark class="hl hl-high">shop.example/sprng-sale</mark></p>
-      <ul class="flags">
-        <li class="flag sev-high"><span class="dot" aria-hidden="true"></span><div><strong>Broken link (404 Not Found)</strong><p>Readers will land on an error page.</p></div></li>
-        <li class="flag sev-med"><span class="dot" aria-hidden="true"></span><div><strong>“tomorrow” in a post with no fixed time</strong><p>Queue times move. At the current slot “tomorrow” means Sat 14 Nov.</p></div></li>
-        <li class="flag sev-med"><span class="dot" aria-hidden="true"></span><div><strong>Markdown bold will show as asterisks</strong><p>X does not render **bold**.</p></div></li>
+  <section class="sheet" id="checks" aria-labelledby="checks-h">
+    <div class="wrap">
+      <h2 id="checks-h">What it looks for in every queued post</h2>
+      <p class="sub">Every rule is plain code, judged at the moment the post goes out, in the channel’s time zone.</p>
+      <div class="contact" data-ui>
+        <article class="cframe big">
+          ${edge('twitter', 'X', 'Mon 09:30', 'queue slot')}
+          <p class="snip">Last pieces here: <mark class="hl hl-high">shop.littlekiln.example/autumn-sale</mark></p>
+          <h3>Dead links</h3>
+          <p>Every link is opened the way a reader would: 404s, server errors, domains that no longer exist, redirect loops, links to localhost.</p>
+          <p class="cframe-result"><span class="code">404</span> Readers will land on an error page.</p>
+        </article>
+        <article class="cframe">
+          ${edge('bluesky', 'Bluesky', 'Wed 19:30', 'custom time')}
+          <p class="snip">Doors open <mark class="hl hl-high">today at 6pm</mark></p>
+          <h3>Day words that drift</h3>
+          <p>“Today”, “tonight”, “this weekend”, “Happy Friday” and dates that will already be past, judged at the moment the post goes out, in the channel’s time zone.</p>
+        </article>
+        <article class="cframe">
+          ${edge('linkedin', 'LinkedIn', 'Tue 20:15', 'custom time')}
+          <p class="snip"><mark class="hl hl-med">**We’re hiring**</mark></p>
+          <h3>Formatting that shows raw</h3>
+          <p>**bold**, # headings, [text](links), HTML tags and &amp;amp; codes on networks that print them as typed.</p>
+        </article>
+        <article class="cframe">
+          ${edge('twitter', 'X', 'Fri 15:00', 'custom time')}
+          <p class="snip"><span class="count over">328</span><span class="count-of"> / 280</span></p>
+          <h3>Too long for the network</h3>
+          <p>Counted the way each network counts: X weights links and emoji, Bluesky counts what you see, LinkedIn counts every link as 24.</p>
+        </article>
+        <article class="cframe">
+          ${edge('twitter', 'X', 'Tue and Thu 09:30', 'queue slot')}
+          <p class="snip"><span class="twice">The new speckled bowls are out of the kiln.</span><span class="twice ghost" aria-hidden="true">The new speckled bowls are out of the kiln.</span></p>
+          <h3>Queued twice</h3>
+          <p>The same or nearly the same text on one channel, and copies across channels at different times.</p>
+        </article>
+        <article class="cframe">
+          ${edge('linkedin', 'LinkedIn', 'Mon 11:00', 'custom time')}
+          <p class="snip">Hi <mark class="hl hl-high">{{first_name}}</mark>, … Grab a spot before they fill up: <mark class="hl hl-high">[link]</mark></p>
+          <h3>Leftovers</h3>
+          <p>[link], {{first_name}}, TODO, images without alt text, hashtags cut short by a hyphen.</p>
+        </article>
+        <article class="cframe">
+          ${edge('instagram', 'Instagram', 'Thu 12:00', 'queue slot')}
+          <p class="snip">Fresh out of the kiln: speckled mugs… <span class="rule-tag">#littlekiln</span></p>
+          <h3>Your channel rules</h3>
+          <p>Phrases a channel never uses, with a word to say instead, and tags every post must carry. Saved in your browser only.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="how" id="how" aria-labelledby="how-h">
+    <div class="wrap">
+      <h2 id="how-h">How a last look works, from sign-in to fix</h2>
+      <ol class="steps">
+        <li class="step" data-step="connect">
+          <div class="step-copy"><h3>Connect with Buffer</h3><p>You sign in with Buffer (OAuth with PKCE). Last Look gets a token that lasts about an hour: it can read your queue, and change a post only when you press a fix and confirm it.</p></div>
+          <div data-ui class="stage stage-connect" aria-hidden="true">
+            <div class="consent"><p class="consent-h">Last Look asks Buffer for</p><ul class="scopes"><li><span class="scope">account:read</span>your channels and their time zones</li><li><span class="scope">posts:read</span>scheduled posts, approvals and drafts</li><li><span class="scope">posts:write</span>only when you confirm a fix</li></ul><p class="consent-f">Never creates, publishes or deletes a post.</p></div>
+          </div>
+        </li>
+        <li class="step" data-step="scan">
+          <div class="step-copy"><h3>Scan the whole queue</h3><p>Every scheduled post, post awaiting approval and draft across your channels, in one to three requests. Your browser runs the checks in plain code, so the same post always gets the same answer.</p></div>
+          <div data-ui class="stage stage-scan" aria-hidden="true">
+            <div class="rows">
+              <div class="row"><span class="r-when">Mon 09:30</span>${icon('twitter')}<span class="r-text">Happy Friday, makers! Our autumn glaze sale…</span><span class="r-n sev-high">3</span></div>
+              <div class="row"><span class="r-when">Tue 20:15</span>${icon('linkedin')}<span class="r-text">Good morning, everyone! **We’re hiring**…</span><span class="r-n sev-med">3</span></div>
+              <div class="row"><span class="r-when">Wed 12:30</span>${icon('linkedin')}<span class="r-text">Our spring term is now open for booking…</span><span class="r-n sev-ok">OK</span></div>
+              <div class="row"><span class="r-when">Wed 19:30</span>${icon('bluesky')}<span class="r-text">Wheel-throwing taster night is back!…</span><span class="r-n sev-high">2</span></div>
+            </div>
+            <div class="scanbar"></div>
+          </div>
+        </li>
+        <li class="step" data-step="fix">
+          <div class="step-copy"><h3>Fixes through Buffer’s own API</h3><p>Edit the text with a suggested clean version and a word-by-word view of the change, move the post to drafts, or move it in the queue. Every change goes through Buffer’s own API, only when you press confirm, and only on the post you picked. Undo stays for two minutes after an edit.</p></div>
+          <div data-ui class="stage stage-fix" aria-hidden="true">
+            <p class="dlg-mini-h">What changes</p>
+            <p class="diff-mini">Happy <del>Friday</del><ins>Monday</ins>, makers! Our autumn glaze sale ends tomorrow…</p>
+            <div class="fix-row"><span class="btn btn-small btn-quiet">Cancel</span><span class="btn btn-small btn-primary">Save to Buffer</span></div>
+          </div>
+        </li>
+        <li class="step" data-step="move">
+          <div class="step-copy"><h3>Re-checks after a queue move</h3><p>Moved a post? Last Look reads that channel’s queue again and re-checks the day words of every post whose time changed: a “tomorrow” that meant Friday at the old slot is flagged when it now means Saturday, with a one-click word that keeps Friday.</p></div>
+          <div data-ui class="stage stage-move" aria-hidden="true">
+            <div class="board">
+              <div class="b-row moved"><span class="b-text">Doors open <mark class="hl hl-med">tomorrow</mark> at noon</span><span class="b-time"><span class="b-old">Thu 09:30</span><span class="b-new">Fri 09:30</span></span></div>
+              <div class="b-row"><span class="b-text">New mugs in the shop</span><span class="b-time"><span class="b-old">Fri 09:30</span><span class="b-new">Thu 09:30</span></span></div>
+            </div>
+            <p class="b-flag"><span class="dot" aria-hidden="true"></span>Moved to the end: “tomorrow” meant Friday, now Saturday. Say “Friday” to keep the day.</p>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="after" id="after" aria-labelledby="after-h">
+    <div class="wrap after-grid">
+      <h2 id="after-h">Look back and the daily digest</h2>
+      <div class="after-back">
+        <h3>Look back at sent posts</h3>
+        <p>After you connect, Look back reads your most recent sent posts (up to 90) and runs the text checks on them, each judged at the moment it went out. It only reads.</p>
+        ${caught ? `<div class="ledger" data-ui><p class="caught"><span class="caught-n">${esc(String(back.issues))}</span><span class="caught-t">${esc(caught)}, on the sample.</span></p><ul class="lb-rows">${h.groups.map((g) => `<li><span>${esc(g.title)}</span><span class="lb-n">${g.n}</span></li>`).join('')}</ul></div>` : ''}
+        <p><a class="btn" href="/try#sample">See Look back on the sample</a></p>
+      </div>
+      <div class="after-digest">
+        <h3>The daily digest, if you want it</h3>
+        <p>Tomorrow’s catches every day at the hour you pick, on a private page and a feed for Slack, a feed reader or your inbox. Read-only, off until you turn it on, one click to turn off.</p>
+        <div class="flow" data-ui aria-hidden="true">
+          <div class="node n-queue"><span class="node-t">Your queue</span><span class="node-s">read once a day</span></div>
+          <div class="wire w1"><i></i></div>
+          <div class="node n-digest"><span class="node-t">Digest</span><span class="node-s">private page + Atom feed</span></div>
+          <div class="fan">
+            <div class="wire w2"><i></i></div>
+            <div class="outs">
+              <span class="out"><img class="ic" src="/icons/slack.svg?v=${V}" alt="" width="16" height="16" loading="lazy">Slack /feed</span>
+              <span class="out"><svg class="ic ic-rss" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="6" cy="18" r="2.2"/><path d="M4 10.5a9.5 9.5 0 0 1 9.5 9.5M4 4a16 16 0 0 1 16 16"/></svg>Feed reader</span>
+              <span class="out"><svg class="ic ic-mail" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5.5" width="18" height="13" rx="1.5"/><path d="M3.5 6.5l8.5 6.5 8.5-6.5"/></svg>Email</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="close" id="close" aria-labelledby="close-h">
+    <div class="wrap">
+      <h2 id="close-h">Give your queue a last look before it posts</h2>
+      <ul class="trust" aria-label="Promises">
+        <li>Reads your queue, changes nothing on its own</li>
+        <li>Never deletes a post</li>
+        <li>Keeps no copy of your posts</li>
       </ul>
-      <div class="fix-row"><span class="btn btn-small" aria-hidden="true">Clean up formatting</span><span class="btn btn-small btn-quiet" aria-hidden="true">Move to drafts</span></div>
-    </article>
-  </section>
-  </div>
-
-  <section class="checks">
-    <h2>What it looks for</h2>
-    <div class="grid">
-      <div class="card"><h3>Dead links</h3><p>Every link is opened the way a reader would: 404s, server errors, domains that no longer exist, redirect loops, links to localhost.</p></div>
-      <div class="card"><h3>Day words that drift</h3><p>“Today”, “tonight”, “this weekend”, “Happy Friday” and dates that will already be past, judged at the moment the post goes out, in the channel’s time zone.</p></div>
-      <div class="card"><h3>Formatting that shows raw</h3><p>**bold**, # headings, [text](links), HTML tags and &amp;amp; codes on networks that print them as typed.</p></div>
-      <div class="card"><h3>Too long for the network</h3><p>Counted the way each network counts: X weights links and emoji, Bluesky counts what you see, LinkedIn counts every link as 24.</p></div>
-      <div class="card"><h3>Queued twice</h3><p>The same or nearly the same text on one channel, and copies across channels at different times.</p></div>
-      <div class="card"><h3>Leftovers</h3><p>[link], {{first_name}}, TODO, images without alt text, hashtags cut short by a hyphen.</p></div>
+      <p class="cta-row"><a class="btn btn-primary btn-lg" href="/oauth/start">Connect Buffer</a><a class="btn btn-lg" href="/try">Try it on your own post</a></p>
     </div>
   </section>
-
-  <section class="fixes">
-    <h2>One click to fix, one more to confirm</h2>
-    <ol class="steps">
-      <li><strong>Edit the text.</strong> Last Look suggests the cleaned-up version where it can and shows exactly what changes before anything is saved.</li>
-      <li><strong>Move to drafts.</strong> Pull a post out of the schedule without losing it.</li>
-      <li><strong>Move in the queue.</strong> Send a repeat to the back of the queue.</li>
-    </ol>
-    <p class="note">Every change goes through Buffer’s own API, only when you press confirm, and only on the post you picked. Moved a post? Last Look re-checks every post the move pushed to a new time.</p>
-    <p class="note"><strong>Daily digest, if you want it:</strong> tomorrow’s catches every day at the hour you pick, on a private page and a feed for Slack, a feed reader or your inbox. Read-only, off until you turn it on, one click to turn off.</p>
-    <p class="cta-row"><a class="btn btn-primary" href="/oauth/start">Connect Buffer</a><a class="btn" href="/try">Try it on your own post</a></p>
-  </section>
-</main>`, {});
+  <div class="dock" id="dock" hidden><a class="btn btn-primary" href="/oauth/start">Connect Buffer</a><a class="btn" href="/try">Try it</a></div>
+</main>`, { site: true, bodyClass: 'is-landing', metas, htmlAttrs: ' data-type="software"' });
 }
 
 /* /try "Your own post": the composer is static markup; public/app.js reads it and renders the check result */
@@ -232,9 +361,20 @@ export function tryPage(now) {
   return shell('Try Last Look on your own post', appBody({ sample: true, staticHtml: trySample(now).html }), { script: true, boot: true, nav, bodyClass: 'is-app is-try', mode: 'try' });
 }
 
+/* Read pages: each h2 gets an id, and a contents rail lists them (sticky on wide screens) */
+function withToc(inner, label) {
+  const items = [];
+  const body = inner.replace(/<h2>([\s\S]*?)<\/h2>/g, (m, t) => {
+    const id = 's-' + (items.length + 1);
+    items.push([id, t.replace(/<[^>]+>/g, '')]);
+    return `<h2 id="${id}">${t}</h2>`;
+  });
+  return `<div class="read"><nav class="toc" aria-label="${esc(label)}"><p class="toc-h">On this page</p><ol>${items.map(([id, t]) => `<li><a href="#${id}">${t}</a></li>`).join('')}</ol></nav><div class="read-body">${body}</div></div>`;
+}
+
 export function privacyPage() {
   return shell('Privacy · Last Look', `
-<main id="main" class="prose">
+<main id="main" class="prose has-toc">${withToc(`
   <h1>Privacy</h1>
   <p class="lead">Last Look is a tool by Swift Bot Labs that checks the posts waiting in your Buffer queue. This page says exactly what it reads, what it keeps, for how long, and what it logs.</p>
 
@@ -257,7 +397,7 @@ export function privacyPage() {
     <li><strong>For one minute only</strong>: a hash of each link we checked for you (so the same link is not fetched twice within a minute) and, per linked website (for example “example.com”), how many checks it received in that minute across all users. Cloudflare’s rate limiter also counts requests per network for a minute, under a one-way hash of your IP address (for IPv6, of its /64 block); the address itself is not stored.</li>
     <li><strong>For at most 30 minutes</strong>: a one-way hash of each sign-in attempt’s one-time value, so the same sign-in response cannot be used twice.</li>
     <li><strong>App-wide</strong>: how many requests Buffer still allows this app, read from Buffer’s replies.</li>
-    <li><strong>In your browser</strong>: one cookie with the session id (HttpOnly, Secure, SameSite=Lax). During sign-in a second cookie lives for at most 10 minutes with one-time sign-in values. Channel rules you set (phrases to avoid, tags every post needs) are saved in your browser’s local storage under your channels’ ids; they are never sent to our server or to Buffer, and clearing a channel’s rules or your site data removes them.</li>
+    <li><strong>In your browser</strong>: one cookie with the session id (HttpOnly, Secure, SameSite=Lax). During sign-in a second cookie lives for at most 10 minutes with one-time sign-in values. Channel rules you set (phrases to avoid, tags every post needs) are saved in your browser’s local storage under your channels’ ids; they are never sent to our server or to Buffer, and clearing a channel’s rules or your site data removes them. The light or dark theme you pick with the button in the header is saved there too.</li>
   </ul>
 
   <h2>The daily digest (only if you turn it on)</h2>
@@ -290,13 +430,13 @@ export function privacyPage() {
 
   <h2>Who runs it</h2>
   <p>Swift Bot Labs, contact <a href="mailto:swiftbotlabs@gmail.com">swiftbotlabs@gmail.com</a>. Last Look runs on Cloudflare Workers. It is not made by or affiliated with Buffer.</p>
-  <p class="muted">Last updated 5 November 2026.</p>
-</main>`, {});
+  <p class="muted">Last updated 6 November 2026.</p>
+`, 'Privacy sections')}</main>`, {});
 }
 
 export function aboutPage() {
   return shell('How it works · Last Look', `
-<main id="main" class="prose">
+<main id="main" class="prose has-toc">${withToc(`
   <h1>How Last Look works</h1>
   <p class="lead">Scheduling posts in advance is how good social media gets done, and it is also how a post that was right on Monday goes out wrong on Thursday. Last Look is the pre-flight check: one look at everything queued, with the problems pulled to the top.</p>
   <h2>1. Connect</h2>
@@ -328,7 +468,7 @@ export function aboutPage() {
     <li>Day words are a judgment call. When a post has its own fixed time, Last Look only notes what “tomorrow” will mean, it does not call it wrong.</li>
   </ul>
   <p class="cta-row"><a class="btn btn-primary" href="/oauth/start">Connect Buffer</a><a class="btn" href="/try">Try it on your own post</a><a class="btn btn-quiet" href="/try#sample">Sample queue</a></p>
-</main>`, {});
+`, 'How it works sections')}</main>`, {});
 }
 
 export function errorPage(title, message, withRetry, opts) {
@@ -420,7 +560,7 @@ export function digestPage(o) {
     <form method="post" action="/digest/${esc(o.ft)}/off"><button type="submit" class="btn btn-danger">Turn off the daily digest</button></form>
     <p class="muted">One click: it deletes the digest’s Buffer access and every digest stored for you, at once. It also turns itself off if nobody opens this page or the feed for 14 days.</p>
   </section>
-</main>`, { bodyClass: 'is-digest' });
+</main>`, { bodyClass: 'is-digest', bare: true });
 }
 export function digestOffConfirm(ft) {
   return shell('Turn off the digest · Last Look', `
@@ -428,7 +568,7 @@ export function digestOffConfirm(ft) {
   <h1>Turn off the daily digest?</h1>
   <p class="lead">This deletes the digest’s Buffer access and every digest stored for you. Your Buffer posts are not touched.</p>
   <form method="post" action="/digest/${esc(ft)}/off" class="cta-row"><button type="submit" class="btn btn-primary">Turn it off</button><a class="btn btn-quiet" href="/digest/${esc(ft)}">Keep it</a></form>
-</main>`, {});
+</main>`, { bare: true });
 }
 export function digestOffDone() {
   return shell('Digest is off · Last Look', `
@@ -436,7 +576,7 @@ export function digestOffDone() {
   <h1>The daily digest is off</h1>
   <p class="lead">Its Buffer access was deleted and is being revoked at Buffer now; every stored digest is gone. Nothing in your Buffer queue was changed.</p>
   <p class="cta-row"><a class="btn btn-primary" href="/">Back to Last Look</a></p>
-</main>`, {});
+</main>`, { bare: true });
 }
 /* Atom feed: one entry per stored digest. Text content only (type="html" with escaped markup), no script. */
 export function digestFeed(o) {
