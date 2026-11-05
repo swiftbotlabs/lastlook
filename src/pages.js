@@ -62,7 +62,8 @@ function heroFrame(f, i) {
   const body = f.flags.length
     ? `<ul class="flags">${flags}</ul>${f.fix ? `<div class="fix-row"><span class="btn btn-small hero-fix" aria-hidden="true">${esc(f.fix)}</span><span class="btn btn-small btn-quiet" aria-hidden="true">Edit text</span></div>` : ''}`
     : '<p class="clear-line"><svg class="ok-tick" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.5 12.8l4.6 4.4L19.6 6.6"/></svg>Nothing to fix in this post.</p>';
-  return `<article class="post frame${f.flags.length ? '' : ' is-clear'}" data-frame="${i}">${edge(f.service, f.channel, f.when, f.slot)}<p class="post-text">${f.textHtml}</p>${body}</article>`;
+  const text = f.textHtml.replace(/(<mark class="hl hl-high">)(https?:\/\/[^<]+)(<\/mark>)/g, (m, a, u, c) => a.replace('hl-high', 'hl-high long') + u.replace(/\/(?=[^/])/g, '/<wbr>') + c);
+  return `<article class="post frame${f.flags.length ? '' : ' is-clear'}" data-frame="${i}">${edge(f.service, f.channel, f.when, f.slot)}<p class="post-text">${text}</p>${body}</article>`;
 }
 
 export function landingPage(now) {
@@ -83,8 +84,13 @@ export function landingPage(now) {
           <a class="btn btn-lg" href="/try">Try it on your own post</a>
         </div>
         <p class="hero-alt muted">Trying it needs no sign-in. Or <a href="/try#sample">browse a sample queue</a>.</p>
+        <ul class="legend" aria-label="What the marks mean">
+          <li><span class="key key-red" aria-hidden="true"></span>Fix before it posts</li>
+          <li><span class="key key-yellow" aria-hidden="true"></span>Worth a look</li>
+          <li><span class="key key-green" aria-hidden="true"></span>Looks good</li>
+        </ul>
       </div>
-      <div class="table" id="table" data-ui role="group" aria-label="Three posts from the sample queue, checked by Last Look">
+      <div class="table drawn" id="table" data-ui role="group" aria-label="Two posts from the sample queue, checked by Last Look">
         <div class="rebate rebate-top" aria-hidden="true"><span>Sample queue</span><span>Little Kiln Studio, made up for this demo</span><span>checked by the same code as /try</span></div>
         <div class="strip">${h.frames.slice(0, 2).map(heroFrame).join('')}</div>
         <div class="result" aria-live="off"><p class="result-h">${esc(h.headline)}</p><p class="result-s">${esc(h.subline)}</p><a class="result-a" href="/try#sample">Open the sample queue</a></div>
@@ -97,13 +103,14 @@ export function landingPage(now) {
     <div class="wrap">
       <h2 id="checks-h">What it looks for in every queued post</h2>
       <p class="sub">Every rule is plain code, judged at the moment the post goes out, in the channel’s time zone.</p>
-      <div class="contact" data-ui>
+      <div class="contact drawn" data-ui>
         <article class="cframe big">
           ${edge('twitter', 'X', 'Mon 09:30', 'queue slot')}
-          <p class="snip">Last pieces here: <mark class="hl hl-high">shop.littlekiln.example/autumn-sale</mark></p>
+          <p class="snip">Last pieces here: <mark class="hl hl-high long">shop.littlekiln.example/<wbr>autumn-sale</mark></p>
           <h3>Dead links</h3>
           <p>Every link is opened the way a reader would: 404s, server errors, domains that no longer exist, redirect loops, links to localhost.</p>
-          <p class="cframe-result"><span class="code">404</span> Readers will land on an error page.</p>
+          <div class="readout" aria-label="Link check on the sample"><p><span class="ro-k">HEAD</span>shop.littlekiln.example/autumn-sale</p><p><span class="ro-k">answer</span><span class="code">404</span> Not Found, 212 ms, no redirects</p></div>
+          <p class="cframe-result">Readers will land on an error page.</p>
         </article>
         <article class="cframe">
           ${edge('bluesky', 'Bluesky', 'Wed 19:30', 'custom time')}
@@ -177,7 +184,7 @@ export function landingPage(now) {
         </li>
         <li class="step" data-step="move">
           <div class="step-copy"><h3>Re-checks after a queue move</h3><p>Moved a post? Last Look reads that channel’s queue again and re-checks the day words of every post whose time changed: a “tomorrow” that meant Friday at the old slot is flagged when it now means Saturday, with a one-click word that keeps Friday.</p></div>
-          <div data-ui class="stage stage-move" aria-hidden="true">
+          <div data-ui class="stage stage-move drawn" aria-hidden="true">
             <div class="board">
               <div class="b-row moved"><span class="b-text">Doors open <mark class="hl hl-med">tomorrow</mark> at noon</span><span class="b-time"><span class="b-old">Thu 09:30</span><span class="b-new">Fri 09:30</span></span></div>
               <div class="b-row"><span class="b-text">New mugs in the shop</span><span class="b-time"><span class="b-old">Fri 09:30</span><span class="b-new">Thu 09:30</span></span></div>
@@ -223,10 +230,10 @@ export function landingPage(now) {
   <section class="close" id="close" aria-labelledby="close-h">
     <div class="wrap">
       <h2 id="close-h">Give your queue a last look before it posts</h2>
-      <ul class="trust" aria-label="Promises">
-        <li>Reads your queue, changes nothing on its own</li>
-        <li>Never deletes a post</li>
-        <li>Keeps no copy of your posts</li>
+      <ul class="trust drawn" aria-label="Promises">
+        <li><span class="ok-mark" aria-hidden="true">OK</span><strong>Reads your queue, changes nothing on its own</strong><span class="proof">Every change goes through Buffer’s own API, only when you press confirm, and only on the post you picked.</span></li>
+        <li><span class="ok-mark" aria-hidden="true">OK</span><strong>Never deletes a post</strong><span class="proof">Last Look never creates, publishes or deletes posts.</span></li>
+        <li><span class="ok-mark" aria-hidden="true">OK</span><strong>Keeps no copy of your posts</strong><span class="proof">The server does not keep the posts after answering.</span></li>
       </ul>
       <p class="cta-row"><a class="btn btn-primary btn-lg" href="/oauth/start">Connect Buffer</a><a class="btn btn-lg" href="/try">Try it on your own post</a></p>
     </div>

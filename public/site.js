@@ -98,6 +98,15 @@ if (how && !still && 'IntersectionObserver' in window) {
   steps.forEach((s) => lit.observe(s));
 }
 
+/* ---------- contact sheet and promises: the marks draw on when the frames come into view ---------- */
+if (!still && 'IntersectionObserver' in window) {
+  for (const box of $$('.drawn.contact, .drawn.trust')) {
+    box.classList.add('watch');
+    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { io.disconnect(); box.classList.add('seen'); } }, { threshold: 0.3 });
+    io.observe(box);
+  }
+}
+
 /* ---------- digest wires: each pulse runs the wire's own length ---------- */
 function wires() { for (const w of $$('.wire')) w.style.setProperty('--run', Math.max(40, w.clientWidth + 10) + 'px'); }
 wires();
@@ -105,7 +114,7 @@ window.addEventListener('resize', wires, { passive: true });
 
 /* ---------- phones: the action bar shows once the hero has scrolled away, and leaves at the close ---------- */
 const dock = $('#dock');
-const hero = $('.hero');
+const hero = $('.hero-cta');
 const close = $('#close');
 if (dock && hero && 'IntersectionObserver' in window) {
   dock.hidden = false;
