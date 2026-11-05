@@ -73,6 +73,15 @@ A pre-flight check only helps if someone opens it. The **Daily digest** tab turn
 
 Every limit (Buffer's 429, the app-wide allowance margin, per-account budgets, the per-IP limit) reads as a short pause, not an error: what is happening, when to try again (the `Retry-After` turned into a local time), and that nothing was changed. The Scan and Look back buttons count down instead of failing again, sign-in says so before Buffer's consent screen, and an empty or paused state points to Look back and the sample queue.
 
+## Build log (all dates UTC, all inside the build window)
+
+Every commit is public in [the commit history](https://github.com/swiftbotlabs/lastlook/commits/master). Day by day:
+
+- **3 November** (12 commits, 03:01 to 06:16): first commit. OAuth sign-in, the queue scan with link, time, formatting, length, repeat and leftover checks, fixes through the Buffer API after you confirm, SSRF-safe link checks, the shared Buffer rate limiter in a Durable Object, `/try` on a sample queue, Look back on the last 90 sent posts, two-minute Undo, calm pause states.
+- **4 November** (12 commits, 06:48 to 18:25): `/try` "Your own post" tab, day words re-checked after a queue reorder (the post's new slot, read back from Buffer), the opt-in daily digest on its own read-only grant, moves that behave the way Buffer does, per-channel rules, `/try` results without JavaScript, MIT licence and setup steps for your own copy.
+
+There was no code before 3 November.
+
 ## Development
 
 ```
