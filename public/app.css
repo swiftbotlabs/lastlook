@@ -63,6 +63,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:
 @view-transition{navigation:auto}
 .top{view-transition-name:masthead}
 ::view-transition-old(root),::view-transition-new(root){animation-duration:220ms}
+::view-transition-group(root),::view-transition-group(masthead){animation:none}
 
 /* ---------- header + footer ---------- */
 .top{position:relative;z-index:5;border-bottom:1px solid var(--line);background:var(--paper)}
@@ -171,6 +172,16 @@ mark.hl-low{background:none;border-bottom:2px dashed var(--blue);border-radius:0
 .js .table.armed.on mark.hl.m-on:not(.hl-high){background-size:100% 100%}
 .js .table.armed.on .flag.f-on,.js .table.armed.on .fix-row.f-on,.js .table.armed.on .clear-line.f-on,.js .table.armed.on .result.f-on{opacity:1;transform:none}
 .js .table.armed .hero-fix.pressed{transform:scale(.95);background:#141414;color:#fff}
+/* before site.js arms the table: hidden from the first paint (no flash of the finished state), shown anyway after 3 s
+   if the script never runs */
+@media (prefers-reduced-motion:no-preference){
+  .js .table:not(.armed) mark.hl-high{border-color:transparent;animation:ll-b 1ms 3s forwards}
+  .js .table:not(.armed) mark.hl:not(.hl-high){background-size:0% 100%;background-repeat:no-repeat;animation:ll-bg 1ms 3s forwards}
+  .js .table:not(.armed) :is(.flag,.fix-row,.clear-line,.result){opacity:0;animation:ll-o 1ms 3s forwards}
+}
+@keyframes ll-b{to{border-color:#c8202a}}
+@keyframes ll-bg{to{background-size:100% 100%}}
+@keyframes ll-o{to{opacity:1}}
 .flag.done{opacity:.78!important}
 .flag.done strong{text-decoration:line-through;text-decoration-color:#1d7a45;text-decoration-thickness:2px}
 .js .table.armed mark.hl.fixed::after{border-color:#1d7a45}
@@ -178,7 +189,7 @@ mark.hl-low{background:none;border-bottom:2px dashed var(--blue);border-radius:0
 .swap.out{transform:translateY(-55%);opacity:0}
 .swap.in{transform:translateY(55%);opacity:0}
 .scan{position:absolute;top:58px;bottom:0;left:0;width:90px;pointer-events:none;opacity:0;background:linear-gradient(90deg,transparent,rgba(255,226,140,.38),transparent);transform:translateX(-120px);z-index:2}
-.scan.go{transition:transform 1500ms var(--e-move),opacity 300ms;transform:translateX(760px)}
+.scan.go{transition:transform 1100ms var(--e-move),opacity 300ms;transform:translateX(760px)}
 
 /* ---------- landing: sections ---------- */
 .sheet,.how,.after,.close{padding:56px 0}
