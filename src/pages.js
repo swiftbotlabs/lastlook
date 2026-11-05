@@ -32,7 +32,7 @@ ${o.script ? `<script type="module" src="/app.js?v=${V}"></script>` : ''}${o.sit
 </head>
 <body class="${o.bodyClass || ''}">
 <a class="skip" href="#main">Skip to content</a>
-<header class="top">
+<header class="top nav">
   <div class="top-in">
     <a class="brand" href="/" aria-label="Last Look home">${LOGO}<span class="brand-name">Last Look</span></a>
     <nav class="top-nav" aria-label="Site">${o.nav || '<a href="/about">How it works</a><a href="/privacy">Privacy</a><a class="btn btn-small btn-primary top-cta" href="/oauth/start">Connect Buffer</a>'}</nav>
@@ -40,7 +40,7 @@ ${o.script ? `<script type="module" src="/app.js?v=${V}"></script>` : ''}${o.sit
   </div>
 </header>
 ${body}
-<footer class="foot">
+<footer class="foot${o.closing ? ' closing' : ''}">${o.closing || ''}
   <div class="foot-in">
     <p>Last Look by Swift Bot Labs. Uses the Buffer API; not made by or affiliated with Buffer.</p>
     <p class="foot-links"><a href="/about">How it works</a><a href="/privacy">Privacy</a><a href="/try">Try it</a></p>
@@ -218,6 +218,8 @@ export function landingPage(now) {
     </div>
   </section>
 
+</main>
+<div class="dock" id="dock" hidden><a class="btn btn-primary" href="/oauth/start">Connect Buffer</a><a class="btn" href="/try">Try it</a></div>`, { site: true, bodyClass: 'is-landing', metas, htmlAttrs: ' data-type="software"', closing: `
   <section class="close" id="close" aria-labelledby="close-h">
     <div class="wrap">
       <h2 id="close-h">Give your queue a last look before it posts</h2>
@@ -228,9 +230,7 @@ export function landingPage(now) {
       </ul>
       <p class="cta-row"><a class="btn btn-primary btn-lg" href="/oauth/start">Connect Buffer</a><a class="btn btn-lg" href="/try">Try it on your own post</a></p>
     </div>
-  </section>
-  <div class="dock" id="dock" hidden><a class="btn btn-primary" href="/oauth/start">Connect Buffer</a><a class="btn" href="/try">Try it</a></div>
-</main>`, { site: true, bodyClass: 'is-landing', metas, htmlAttrs: ' data-type="software"' });
+  </section>` });
 }
 
 /* /try "Your own post": the composer is static markup; public/app.js reads it and renders the check result */
