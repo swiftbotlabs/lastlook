@@ -62,7 +62,7 @@ function heroFrame(f, i) {
   const body = f.flags.length
     ? `<ul class="flags">${flags}</ul>${f.fix ? `<div class="fix-row"><span class="btn btn-small hero-fix" aria-hidden="true">${esc(f.fix)}</span><span class="btn btn-small btn-quiet" aria-hidden="true">Edit text</span></div>` : ''}`
     : '<p class="clear-line"><svg class="ok-tick" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.5 12.8l4.6 4.4L19.6 6.6"/></svg>Nothing to fix in this post.</p>';
-  const text = f.textHtml.replace(/(<mark class="hl hl-high">)(https?:\/\/[^<]+)(<\/mark>)/g, (m, a, u, c) => a.replace('hl-high', 'hl-high long') + u.replace(/\/(?=[^/])/g, '/<wbr>') + c);
+  const text = f.textHtml.replace(/(<mark class="hl hl-high">)(https?:\/\/[^<]+)(<\/mark>)/g, (m, a, u, c) => a.replace('hl-high', 'hl-high long') + u.replace(/[^/]+/g, (seg) => '<span class="nb">' + seg + '</span>').replace(/\/(?=<span)/g, '/<wbr>') + c);
   return `<article class="post frame${f.flags.length ? '' : ' is-clear'}" data-frame="${i}">${edge(f.service, f.channel, f.when, f.slot)}<p class="post-text">${text}</p>${body}</article>`;
 }
 
@@ -106,7 +106,7 @@ export function landingPage(now) {
       <div class="contact drawn" data-ui>
         <article class="cframe big">
           ${edge('twitter', 'X', 'Mon 09:30', 'queue slot')}
-          <p class="snip">Last pieces here: <mark class="hl hl-high long">shop.littlekiln.example/<wbr>autumn-sale</mark></p>
+          <p class="snip">Last pieces here: <mark class="hl hl-high long"><span class="nb">shop.littlekiln.example</span>/<wbr><span class="nb">autumn-sale</span></mark></p>
           <h3>Dead links</h3>
           <p>Every link is opened the way a reader would: 404s, server errors, domains that no longer exist, redirect loops, links to localhost.</p>
           <div class="readout" aria-label="Link check on the sample"><p><span class="ro-k">HEAD</span>shop.littlekiln.example/autumn-sale</p><p><span class="ro-k">answer</span><span class="code">404</span> Not Found, 212 ms, no redirects</p></div>
@@ -221,6 +221,7 @@ export function landingPage(now) {
             </div>
           </div>
         </div>
+        <p class="feed-eg" data-ui>/feed subscribe <span>https://lastlook.swiftbotlab.workers.dev/digest/…/feed.xml</span></p>
       </div>
     </div>
   </section>
@@ -231,9 +232,9 @@ export function landingPage(now) {
     <div class="wrap">
       <h2 id="close-h">Give your queue a last look before it posts</h2>
       <ul class="trust drawn" aria-label="Promises">
-        <li><span class="ok-mark" aria-hidden="true">OK</span><strong>Reads your queue, changes nothing on its own</strong><span class="proof">Every change goes through Buffer’s own API, only when you press confirm, and only on the post you picked.</span></li>
-        <li><span class="ok-mark" aria-hidden="true">OK</span><strong>Never deletes a post</strong><span class="proof">Last Look never creates, publishes or deletes posts.</span></li>
-        <li><span class="ok-mark" aria-hidden="true">OK</span><strong>Keeps no copy of your posts</strong><span class="proof">The server does not keep the posts after answering.</span></li>
+        <li><div class="edge"><a href="/about">How it works</a></div><span class="ok-mark" aria-hidden="true">OK</span><strong>Reads your queue, changes nothing on its own</strong><span class="proof">Every change goes through Buffer’s own API, only when you press confirm, and only on the post you picked.</span></li>
+        <li><div class="edge"><a href="/privacy">Privacy</a></div><span class="ok-mark" aria-hidden="true">OK</span><strong>Never deletes a post</strong><span class="proof">Last Look never creates, publishes or deletes posts.</span></li>
+        <li><div class="edge"><a href="/privacy">Privacy</a></div><span class="ok-mark" aria-hidden="true">OK</span><strong>Keeps no copy of your posts</strong><span class="proof">The server does not keep the posts after answering.</span></li>
       </ul>
       <p class="cta-row"><a class="btn btn-primary btn-lg" href="/oauth/start">Connect Buffer</a><a class="btn btn-lg" href="/try">Try it on your own post</a></p>
     </div>

@@ -65,6 +65,12 @@ function play() {
   const btn = first && $('.hero-fix', first);
   const target = first && $$('mark.hl-high', first).find((m) => /Friday/.test(m.textContent));
   if (btn && target && /Monday/.test(btn.textContent)) {
+    /* hold the mark at the width of its fixed text, so the swap moves no line */
+    const was = target.textContent;
+    target.textContent = was.replace('Friday', 'Monday');
+    const wide = target.getBoundingClientRect().width;
+    target.textContent = was;
+    target.style.minWidth = Math.ceil(Math.max(wide, target.getBoundingClientRect().width)) + 'px';
     t += 700;
     at(t, () => btn.classList.add('pressed'));
     at(t + 260, () => {
