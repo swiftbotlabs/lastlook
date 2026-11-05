@@ -7,10 +7,10 @@
 :root{
   --paper:#ebeeef;--print:#ffffff;--print-2:#f5f7f7;--rebate:#141414;--rebate-ink:#f3f1ea;
   --ink:#171717;--muted:#444946;--line:#dcdfd9;--line-strong:#b9beb7;
-  --red:#c8202a;--red-bg:#fbe3e2;--yellow:#f3c21b;--yellow-bg:#fdf0bf;--amber:#b85f00;--edge:#ffb65c;
+  --red:#c8202a;--red-bg:#fbe3e2;--yellow:#f3c21b;--yellow-bg:#fdf0bf;--amber:#9a4f00;--edge:#ffb65c;
   --green:#1d7a45;--green-bg:#dcf1e3;--blue:#2457a6;--blue-bg:#e1e9f6;
   --table:#fbfcfa;--table-glow:rgba(255,255,250,.9);--table-edge:#d7dbd4;
-  --btn:#141414;--btn-ink:#ffffff;--focus:#2457a6;--hl:url(/marks/wax.svg);--oval:url(/marks/oval-red.svg);--hole:var(--paper);
+  --btn:#141414;--btn-ink:#ffffff;--focus:#2457a6;--hl:url(/marks/wax.svg);--oval:url(/marks/loop-red.svg);--hole:var(--paper);
   --shadow:0 1px 1px rgba(20,20,20,.06),0 6px 18px -6px rgba(20,20,20,.16);
   --shadow-lift:0 2px 2px rgba(20,20,20,.06),0 14px 28px -10px rgba(20,20,20,.24);
   /* app aliases (public/app.js builds its views with these class names) */
@@ -29,7 +29,7 @@
   --red:#ff6b6e;--red-bg:#3d1c1d;--yellow:#ffd54a;--yellow-bg:#3a3010;--amber:#ffb65c;--edge:#ffb65c;
   --green:#57c98a;--green-bg:#16301f;--blue:#8fb2ec;--blue-bg:#1b2840;
   --table:#f4f5f2;--table-glow:rgba(255,250,230,.16);--table-edge:#3a3d3f;
-  --btn:#f4f5f2;--btn-ink:#121212;--focus:#8fb2ec;--hl:url(/marks/wax-dark.svg);--oval:url(/marks/oval-red-dark.svg);--hole:#62676a;
+  --btn:#f4f5f2;--btn-ink:#121212;--focus:#8fb2ec;--hl:url(/marks/wax-dark.svg);--oval:url(/marks/loop-red-dark.svg);--hole:#8a8a8a;
   --shadow:0 1px 1px rgba(0,0,0,.4),0 8px 20px -8px rgba(0,0,0,.6);--shadow-lift:0 2px 2px rgba(0,0,0,.4),0 16px 30px -10px rgba(0,0,0,.7);
   --accent-ink:#121212;--med:#ffd54a;--ins:#8be3ad;--ins-bg:#173a26;--del:#ff9a9a;--del-bg:#4a1f20;
   color-scheme:dark;}}
@@ -39,7 +39,7 @@
   --red:#ff6b6e;--red-bg:#3d1c1d;--yellow:#ffd54a;--yellow-bg:#3a3010;--amber:#ffb65c;--edge:#ffb65c;
   --green:#57c98a;--green-bg:#16301f;--blue:#8fb2ec;--blue-bg:#1b2840;
   --table:#f4f5f2;--table-glow:rgba(255,250,230,.16);--table-edge:#3a3d3f;
-  --btn:#f4f5f2;--btn-ink:#121212;--focus:#8fb2ec;--hl:url(/marks/wax-dark.svg);--oval:url(/marks/oval-red-dark.svg);--hole:#62676a;
+  --btn:#f4f5f2;--btn-ink:#121212;--focus:#8fb2ec;--hl:url(/marks/wax-dark.svg);--oval:url(/marks/loop-red-dark.svg);--hole:#8a8a8a;
   --shadow:0 1px 1px rgba(0,0,0,.4),0 8px 20px -8px rgba(0,0,0,.6);--shadow-lift:0 2px 2px rgba(0,0,0,.4),0 16px 30px -10px rgba(0,0,0,.7);
   --accent-ink:#121212;--med:#ffd54a;--ins:#8be3ad;--ins-bg:#173a26;--del:#ff9a9a;--del-bg:#4a1f20;
   color-scheme:dark;}
@@ -114,7 +114,7 @@ main.landing{width:100%;padding:0}
 
 /* ---------- marks: china marker (red), wax pencil (yellow), blue pencil ---------- */
 mark.hl{color:inherit;background:var(--hl) no-repeat 0 0/100% 100%;padding:0 1px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
-mark.hl-high{background:var(--oval) no-repeat center/100% 100%;padding:2px 7px;margin:0 -3px;border-radius:0}
+mark.hl-high{background:var(--oval) no-repeat center/100% 100%;padding:5px 8px;margin:0 -3px;border-radius:0}
 /* landing frames: the china-marker oval drawn as a hand-made stroke */
 .drawn mark.hl-high{display:inline-block;position:relative;border:0;padding:0 1px;margin:0;background:none}
 .drawn mark.hl-high.long::after{-webkit-mask-image:url(/marks/loop.svg);mask-image:url(/marks/loop.svg)}
@@ -201,7 +201,7 @@ mark.hl-low{background:none;border-bottom:2px dashed var(--blue);border-radius:0
 .swap.out{transform:translateY(-55%);opacity:0}
 .swap.in{transform:translateY(55%);opacity:0}
 .scan{position:absolute;top:58px;bottom:0;left:0;width:90px;pointer-events:none;opacity:0;background:linear-gradient(90deg,transparent,rgba(255,226,140,.38),transparent);transform:translateX(-120px);z-index:2}
-.scan.go{transition:transform 1100ms var(--e-move),opacity 300ms;transform:translateX(760px)}
+.scan.go{transition:transform 580ms var(--e-move),opacity 300ms;transform:translateX(760px)}
 
 /* ---------- landing: sections ---------- */
 .sheet,.how,.after,.close{padding:56px 0}
@@ -652,18 +652,18 @@ html:not(.js) .is-try .views,html:not(.js) .is-try .own-grid{display:none}
 
 
 /* prints stay lit in both modes: in the darkroom the light table and the paper prints are the bright things */
-.table,.cframe,.stage,.flow,.ledger,.close .trust li,.own-preview,.post,.lb-group,.empty{--oval:url(/marks/oval-red.svg);--print:#fff;--print-2:#f5f7f7;--ink:#171717;--muted:#444946;--line:#dcdfd9;--line-strong:#b9beb7;--red:#c8202a;--red-bg:#fbe3e2;--yellow:#f3c21b;--yellow-bg:#fdf0bf;--green:#1d7a45;--green-bg:#dcf1e3;--blue:#2457a6;--blue-bg:#e1e9f6;--high:#c8202a;--med:#8a5a00;--btn:#141414;--btn-ink:#fff;--focus:#2457a6;--ins:#16653a;--ins-bg:#d4efdd;--del:#a81a22;--del-bg:#fadcdb;--hl:url(/marks/wax.svg);--amber:#b85f00;--rebate:#141414;--rebate-ink:#f3f1ea;color:var(--ink);color-scheme:light}
+.table,.cframe,.stage,.flow,.ledger,.close .trust li,.own-preview,.post,.lb-group,.empty{--oval:url(/marks/loop-red.svg);--print:#fff;--print-2:#f5f7f7;--ink:#171717;--muted:#444946;--line:#dcdfd9;--line-strong:#b9beb7;--red:#c8202a;--red-bg:#fbe3e2;--yellow:#f3c21b;--yellow-bg:#fdf0bf;--green:#1d7a45;--green-bg:#dcf1e3;--blue:#2457a6;--blue-bg:#e1e9f6;--high:#c8202a;--med:#8a5a00;--btn:#141414;--btn-ink:#fff;--focus:#2457a6;--ins:#16653a;--ins-bg:#d4efdd;--del:#a81a22;--del-bg:#fadcdb;--hl:url(/marks/wax.svg);--amber:#9a4f00;--rebate:#141414;--rebate-ink:#f3f1ea;color:var(--ink);color-scheme:light}
 .own-preview{padding:18px;border-radius:6px;background:var(--table);box-shadow:inset 0 0 0 1px var(--table-edge)}
 .hero{background:radial-gradient(62% 80% at 74% 52%,#fff 0%,rgba(255,255,255,.7) 30%,transparent 72%)}
 :root[data-theme="dark"] .hero{background:radial-gradient(55% 65% at 74% 52%,rgba(255,244,214,.17),transparent 72%)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .hero{background:radial-gradient(55% 65% at 74% 52%,rgba(255,244,214,.17),transparent 72%)}}
 
-.drawn mark.hl-high{max-width:100%;overflow-wrap:normal;word-break:normal;margin:0 3px}
+.drawn mark.hl-high{max-width:100%;overflow-wrap:normal;word-break:normal;margin:0 3px;text-align:center}
 .drawn mark.hl-high::after{inset:-7px -8px -6px}
 .drawn mark.hl-high.long{margin:6px 4px}
 .drawn mark.hl-high.long::after{inset:-8px -10px -7px}
 .nb{white-space:nowrap}
-@media (max-width:599px){.drawn mark.hl-high.long::after{inset:-7px -7px -6px}}
+@media (max-width:599px){.drawn mark.hl-high.long::after{inset:-9px -9px -8px}}
 /* hero legend: the three marks */
 .legend{list-style:none;margin:40px 0 0;padding:20px 0 0;display:flex;flex-wrap:wrap;gap:12px 26px;border-top:1px solid var(--line);font-size:15px;font-weight:600}
 .legend li{display:flex;align-items:center;gap:10px}
@@ -710,15 +710,23 @@ html:not(.js) .is-try .views,html:not(.js) .is-try .own-grid{display:none}
   .ledger{font-size:16px}
   .lb-rows li{padding:12px 0;font-size:16.5px}
   .caught{padding:24px 24px}
-  .how .stage{min-height:calc((200vh - 330px) / 4 - 40px);display:flex;flex-direction:column;justify-content:center}
+  .how .stage{padding:28px 30px}
+.step{align-items:center}
 }
 
-.feed-eg{margin:18px 0 0!important;padding:12px 14px;background:var(--rebate);color:var(--edge)!important;border-radius:3px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:14px!important;overflow-wrap:anywhere;max-width:none!important}
+.feed-eg{margin:18px 0 0!important;padding:12px 14px;background:var(--rebate);color:var(--edge)!important;border-radius:3px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:14px!important;overflow-wrap:break-word;max-width:none!important}
 .feed-eg span{color:var(--rebate-ink)}
 .trust .edge{margin:0 -18px 4px;border-radius:2px 2px 0 0}
 .trust .edge a{color:var(--edge);text-decoration-color:transparent}
 .trust .edge a:hover{text-decoration-color:var(--edge)}
 @media (min-width:1100px){
-  .channel{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px;align-items:start}
+  .channel{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px;align-items:stretch}
   .channel > :not(.post){grid-column:1 / -1}
 }
+
+:where(.stage,.cframe,.table,.flow,.post) .ic-ink{filter:none!important}
+.cframe.big .readout{order:1}
+.cframe.big > .edge{order:0}.cframe.big .snip{order:0}
+.cframe.big h3{order:2;margin-top:auto;padding-top:20px}
+.cframe.big > p:not(.snip):not(.cframe-result){order:3}
+.cframe.big .cframe-result{order:4}

@@ -221,7 +221,7 @@ export function landingPage(now) {
             </div>
           </div>
         </div>
-        <p class="feed-eg" data-ui>/feed subscribe <span>https://lastlook.swiftbotlab.workers.dev/digest/…/feed.xml</span></p>
+        <p class="feed-eg" data-ui>/feed subscribe <span>https://<wbr>lastlook.swiftbotlab.workers.dev/<wbr>digest/<wbr>…/<wbr>feed.xml</span></p>
       </div>
     </div>
   </section>
