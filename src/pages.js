@@ -365,7 +365,7 @@ export function appPage(o) {
    nothing to send to the server. The sample's results are also rendered here as plain HTML (src/trystatic.js), so
    the first paint without JavaScript shows the real flagged posts; /boot.js hides that copy when scripts run. */
 export function tryPage(now) {
-  const nav = '<span class="who">No sign-in, nothing sent</span><a class="btn btn-small btn-primary" href="/oauth/start">Connect Buffer</a>';
+  const nav = '<span class="who">Try mode: nothing is sent</span><a class="btn btn-small btn-primary" href="/oauth/start">Connect Buffer</a>';
   return shell('Try Last Look on your own post', appBody({ sample: true, staticHtml: trySample(now).html }), { script: true, boot: true, nav, bodyClass: 'is-app is-try', mode: 'try' });
 }
 

@@ -182,10 +182,11 @@ test('page: on the sample, moving the sale post to the end re-checks its "tomorr
   assert.equal(b.$('dlg').open, false, document.getElementById('dlg-error').textContent);
   const banner = b.$('queue').find('shift-banner');
   assert.ok(banner, 'a banner after the reorder');
-  assert.match(banner.text(), /^Moved to the end of the queue on Little Kiln \(X\)\. Buffer moved it from Mon 9 Nov 09:30 to Fri 13 Nov 09:30\. No other post changed time\./);
+  /* the sample queue is laid out on the coming week (Mon to Fri, studio time), so the dates move with the calendar: the weekdays and times do not */
+  assert.match(banner.text(), /^Moved to the end of the queue on Little Kiln \(X\)\. Buffer moved it from Mon \d{1,2} [A-Z][a-z]{2} 09:30 to Fri \d{1,2} [A-Z][a-z]{2} 09:30\. No other post changed time\./);
   assert.match(banner.text(), /1 post now says the wrong day/);
   const card = saleCard();
-  assert.match(card.text(), /“tomorrow” now means Sat 14 Nov, not Tue 10 Nov/);
+  assert.match(card.text(), /“tomorrow” now means Sat \d{1,2} [A-Z][a-z]{2}, not Tue \d{1,2} [A-Z][a-z]{2}/);
   assert.match(card.text(), /has passed/, 'Tuesday is already past at the new slot: no made-up word');
   assert.equal(buttons(card, 'Move to front of queue').length, 1, 'offers the front of the queue');
   /* to the front: Buffer shares it next with no time; its day words are flagged as unknown, never judged at a fake time */
